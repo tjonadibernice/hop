@@ -1,0 +1,5 @@
+.env.example
+__pycache__/
+.venv
+node_modules/
+**/.vitepress/dist
