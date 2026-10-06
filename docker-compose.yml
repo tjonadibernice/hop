@@ -2,14 +2,13 @@ services:
   # Database Service
   db:
     image: pgvector/pgvector:pg16
-    container_name: postgres-pgvector
-    restart: always
+    restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DATA_DB}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -22,10 +21,9 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: redis_cache
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -37,4 +35,3 @@ services:
 volumes:
   pgdata:
   redis_data:
-    driver: local
