@@ -20,12 +20,18 @@ export default function HealthStatus() {
 
     async function load() {
       try {
-        const response = await fetch("/api/health/ready", { signal: controller.signal });
+        const response = await fetch("/api/health/ready", {
+          signal: controller.signal,
+        });
+        if (response.status !== 200 && response.status !== 503) {
+          setState({ kind: "unreachable" });
+          return;
+        }
         const data: ReadyResponse = await response.json();
         setState({ kind: "loaded", data });
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
-            return;
+          return;
         }
         setState({ kind: "unreachable" });
       }
@@ -38,9 +44,11 @@ export default function HealthStatus() {
 
   if (state.kind === "loading") {
     return <p>Checking system status…</p>;
-  } else if (state.kind === "unreachable") {
+  }
+  if (state.kind === "unreachable") {
     return <p>Can't reach the API</p>;
-  } else if (state.kind === "loaded") {
+  }
+  if (state.kind === "loaded") {
     return (
       <div>
         <p
