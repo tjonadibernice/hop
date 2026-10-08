@@ -59,6 +59,20 @@ hop/
 
 5. Open http://localhost:5173. The page shows whether the API, Postgres, and Redis are healthy.
 
+## Common commands
+
+| Target | Description |
+| --- | --- |
+| `make up` | Start Postgres and Redis in the background |
+| `make down` | Stop Postgres and Redis |
+| `make api` | Start the backend with reload |
+| `make web` | Start the frontend development server |
+| `make lint` | Run Ruff and ESLint |
+| `make test` | Run backend pytest tests |
+| `make build` | Build the frontend production bundle |
+| `make format` | Format backend and frontend code |
+| `make check` | Run lint, tests, and the frontend build |
+
 ## More details
 
 - [Backend README](backend/README.md): API setup, health checks, tests
