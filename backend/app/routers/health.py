@@ -46,11 +46,11 @@ async def check_redis(request: Request) -> str:
 
 @router.get("/ready")
 async def ready(request: Request) -> JSONResponse:
-    future_postgres, future_redis = await asyncio.gather(
+    postgres_status, redis_status = await asyncio.gather(
         check_postgres(request), check_redis(request)
     )
 
-    checks = {"postgres": future_postgres, "redis": future_redis}
+    checks = {"postgres": postgres_status, "redis": redis_status}
     if all(result == "ok" for result in checks.values()):
         return JSONResponse(status_code=200, content={"status": "ok", "checks": checks})
 
