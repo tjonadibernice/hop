@@ -46,20 +46,12 @@ async def check_redis(request: Request) -> str:
 
 @router.get("/ready")
 async def ready(request: Request) -> JSONResponse:
-    # TODO 4: run both checks AT THE SAME TIME and collect their results
-    future_postgres = asyncio.create_task(check_postgres(request))
-    future_redis = asyncio.create_task(check_redis(request))
-    results = await asyncio.gather(future_postgres, future_redis)
+    future_postgres, future_redis = await asyncio.gather(check_postgres(request), check_redis(request))
 
-    # TODO 5: build {"postgres": ..., "redis": ...}
-    # TODO 6: if every check is "ok" -> status 200 and "status": "ok"
-    #         otherwise              -> status 503 and "status": "degraded"
-    # TODO 7: return a JSONResponse with that status code and body:
-    #         {"status": ..., "checks": {...}}
-    checks = {"postgres": results[0], "redis": results[1]}
-    if all(result == "ok" for result in results):
+    checks = {"postgres": future_postgres, "redis": future_redis}
+    if all(result == "ok" for result in checks.values()):
         return JSONResponse(status_code=200, content={"status": "ok", "checks": checks})
-    else:
-        return JSONResponse(
-            status_code=503, content={"status": "degraded", "checks": checks}
-        )
+
+    return JSONResponse(
+        status_code=503, content={"status": "degraded", "checks": checks}
+    )
