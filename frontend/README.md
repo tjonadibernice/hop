@@ -41,6 +41,7 @@ The proxy is configured in `vite.config.ts`. Frontend code should always call `/
 | `npm run build`   | Type-checks and builds for production into `dist/` |
 | `npm run lint`    | Runs ESLint                                        |
 | `npm run preview` | Serves the production build locally                |
+| `npm run format`  | Formats all files with Prettier                    |
 
 ## Project structure
 

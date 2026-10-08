@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format check
+.PHONY: up down api web lint test build format format-check install check
 
 up:
 	docker compose up -d
@@ -11,6 +11,10 @@ api:
 
 web:
 	cd frontend && npm run dev
+
+install:
+	cd backend && uv sync
+	cd frontend && npm install
 
 lint:
 	cd backend && uv run ruff check .
@@ -26,4 +30,8 @@ format:
 	cd backend && uv run ruff format .
 	cd frontend && npm run format
 
-check: lint test build
+format-check:
+	cd backend && uv run ruff format --check .
+	cd frontend && npx prettier --check .
+
+check: lint format-check test build
