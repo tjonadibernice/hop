@@ -32,26 +32,26 @@ hop/
 1. Create your environment file and fill in real values:
 
     ```bash
-        cp .env.example .env
+    cp .env.example .env
     ```
 
 2. Install dependencies and start Postgres and Redis:
 
     ```bash
-        make install
-        make up
+    make install
+    make up
     ```
 
 3. Start the backend (in a new terminal):
 
     ```bash
-        make api
+    make api
     ```
 
 4. Start the frontend (in another terminal):
 
     ```bash
-        make web
+    make web
     ```
 
 5. Open http://localhost:5173. The page shows whether the API, Postgres, and Redis are healthy.
