@@ -1,10 +1,10 @@
 [project]
-name = "backend"
+name = "hop-backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastAPI backend for Hop, a discovery app that recommends pages users would never have found."
 readme = "README.md"
 authors = [
-    { name = "bo peep", email = "tjonadibernice@gmail.com" }
+    { name = "bernice", email = "tjonadibernice@gmail.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
