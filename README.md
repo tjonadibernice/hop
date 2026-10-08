@@ -31,31 +31,28 @@ hop/
 
 1. Create your environment file and fill in real values:
 
-```bash
-    cp .env.example .env
-```
+    ```bash
+        cp .env.example .env
+    ```
 
-2. Start Postgres and Redis:
+2. Install dependencies and start Postgres and Redis:
 
-```bash
-    docker compose up -d
-```
+    ```bash
+        make install
+        make up
+    ```
 
 3. Start the backend (in a new terminal):
 
-```bash
-    cd backend
-    uv sync
-    uv run uvicorn app.main:app --reload
-```
+    ```bash
+        make api
+    ```
 
 4. Start the frontend (in another terminal):
 
-```bash
-    cd frontend
-    npm install
-    npm run dev
-```
+    ```bash
+        make web
+    ```
 
 5. Open http://localhost:5173. The page shows whether the API, Postgres, and Redis are healthy.
 
@@ -63,6 +60,9 @@ hop/
 
 | Target | Description |
 | --- | --- |
+| `make install` | Install backend and frontend dependencies |
+| `make format-check` | Check formatting without changing files |
+| `make check` | Run lint, format check, tests, and the frontend build |
 | `make up` | Start Postgres and Redis in the background |
 | `make down` | Stop Postgres and Redis |
 | `make api` | Start the backend with reload |
@@ -71,7 +71,6 @@ hop/
 | `make test` | Run backend pytest tests |
 | `make build` | Build the frontend production bundle |
 | `make format` | Format backend and frontend code |
-| `make check` | Run lint, tests, and the frontend build |
 
 ## More details
 
