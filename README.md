@@ -37,11 +37,12 @@ hop/
     cp .env.example .env
     ```
 
-2. Install dependencies and start Postgres and Redis:
+2. Install dependencies, start Postgres and Redis, and set up the database:
 
     ```bash
     make install
     make up
+    make migrate
     ```
 
 3. Start the backend (in a new terminal):
@@ -73,6 +74,8 @@ hop/
 | `make test` | Run backend pytest tests |
 | `make build` | Build the frontend production bundle |
 | `make format` | Format backend and frontend code |
+| `make migrate` | Apply database migrations |
+| `make migration m="message"` | Generate a new migration from model changes |
 
 ## More details
 
