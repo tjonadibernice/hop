@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format format-check install check
+.PHONY: up down api web lint test build format format-check install migrate migration check
 
 up:
 	docker compose up -d
@@ -15,6 +15,12 @@ web:
 install:
 	cd backend && uv sync
 	cd frontend && npm install
+
+migrate:
+	cd backend && uv run alembic upgrade head
+
+migration:
+	cd backend && uv run alembic revision --autogenerate -m "$(m)"
 
 lint:
 	cd backend && uv run ruff check .
