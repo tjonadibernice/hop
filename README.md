@@ -4,6 +4,8 @@ Hop is a discovery app: one click on the Hop button shows a page the user is lik
 
 **Status:** in progress. Phase 1 (project skeleton) is being built.
 
+[![CI](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml/badge.svg)](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml)
+
 ## Tech stack
 
 | Layer | Technology |
