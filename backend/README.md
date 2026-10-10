@@ -63,28 +63,17 @@ uv run ruff format .
 
 ```
 app/
-├── __init__.py
-├── main.py              # App setup, lifespan, and router registration
-├── config.py            # Settings loaded from the root .env
-├── db.py                # Postgres engine and session setup
-├── cache.py             # Redis client
-├── models/              # SQLAlchemy models
-│   └── __init__.py
-├── schemas/             # Pydantic request/response models
-│   └── __init__.py
-├── routers/             # API endpoints
-│   ├── __init__.py
-│   ├── health.py        # Health check endpoints
-│   └── ...
-├── services/            # Business logic
-│   └── __init__.py
-├── utils/              # Helpers and shared utilities
-│   └── __init__.py
-└── dependencies.py      # Shared FastAPI dependencies
+├── main.py          # App setup, lifespan, routers
+├── config.py        # Settings loaded from the root .env
+├── db.py            # Postgres engine
+├── cache.py         # Redis client
+├── models/          # SQLAlchemy models (tables)
+│   ├── base.py      # Base class and constraint naming convention
+│   └── topic.py
+└── routers/
+    └── health.py    # Health check endpoints
 migrations/
-├── versions/
-│   └── ...
+└── versions/        # Migration files, applied in order
 tests/
-├── test_health.py
-└── ...
+└── test_health.py
 ```
