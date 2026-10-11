@@ -31,6 +31,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+  
+  mailpit:
+    image: axllent/mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1025:1025"   # SMTP: the app sends email here
+      - "127.0.0.1:8025:8025"   # Web inbox: open in your browser
 
 volumes:
   pgdata:

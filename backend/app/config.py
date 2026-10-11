@@ -12,5 +12,10 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
 
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    mail_from: str = "Hop <no-reply@hop.local>"
+    app_base_url: str = "http://localhost:5173"
+
 
 settings = Settings()
