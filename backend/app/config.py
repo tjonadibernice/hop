@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     database_url: str
     redis_url: str
+    test_database_url: str | None = None
 
     smtp_host: str = "localhost"
     smtp_port: int = 1025

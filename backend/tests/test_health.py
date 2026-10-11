@@ -8,7 +8,5 @@ def test_live_returns_ok():
 
     response = client.get("/health/live")
 
-    # TODO: assert the status code is 200
-    # TODO: assert the JSON body is {"status": "ok"}
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}

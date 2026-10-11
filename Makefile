@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format format-check install migrate migration check
+.PHONY: up down api web lint test build format format-check install migrate migration check test-db
 
 up:
 	docker compose up -d
@@ -41,3 +41,6 @@ format-check:
 	cd frontend && npx prettier --check .
 
 check: lint format-check test build
+
+test-db:
+	docker compose exec db sh -c 'createdb -U "$$POSTGRES_USER" hop_test'

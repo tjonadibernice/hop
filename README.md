@@ -2,7 +2,7 @@
 
 Hop is a discovery app: one click on the Hop button shows a page the user is likely to enjoy but would never have found.
 
-**Status:** in progress. Phase 1 (project skeleton) is complete; Phase 2 (Hop MVP) is next.
+**Status:** in progress. Phase 1 (project skeleton) is complete; Phase 2 (Hop MVP) is in progress.
 
 [![CI](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml/badge.svg)](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml)
 
@@ -11,10 +11,12 @@ Hop is a discovery app: one click on the Hop button shows a page the user is lik
 | Layer | Technology |
 | --- | --- |
 | Frontend | React, TypeScript, Vite |
-| Backend | Python, FastAPI |
+| Backend | Python, FastAPI, SQLAlchemy, Alembic |
 | Database | PostgreSQL with pgvector |
-| Cache and queues | Redis |
+| Cache, sessions, and queues | Redis |
+| Local email | Mailpit (catches all outgoing email) |
 | Local environment | Docker Compose |
+| CI | GitHub Actions |
 
 ## Project structure
 
@@ -22,62 +24,78 @@ Hop is a discovery app: one click on the Hop button shows a page the user is lik
 hop/
 ├── backend/            # FastAPI API
 ├── frontend/           # React app
-├── docker-compose.yml  # Postgres and Redis for local development
+├── docker-compose.yml  # Postgres, Redis, and Mailpit for local development
 ├── init.sql            # Enables pgvector when the database is first created
+├── Makefile            # Common commands
 └── .env.example        # Environment variables template
 ```
 
 ## Quick start
 
-**Requirements:** Docker, Python 3.12+ with [uv](https://docs.astral.sh/uv/), and Node.js (current LTS).
+**Requirements:** Docker, Python 3.12+ with [uv](https://docs.astral.sh/uv/), Node.js (current LTS), and `make`.
 
 1. Create your environment file and fill in real values:
 
-    ```bash
+```bash
     cp .env.example .env
-    ```
+```
 
-2. Install dependencies, start Postgres and Redis, and set up the database:
+2. Install dependencies, start the services, and set up the database:
 
-    ```bash
+```bash
     make install
     make up
     make migrate
-    ```
+```
 
-3. Start the backend (in a new terminal):
+3. Create the test database (needed once, for `make test`):
 
-    ```bash
+```bash
+    make test-db
+```
+
+4. Start the backend (in a new terminal):
+
+```bash
     make api
-    ```
+```
 
-4. Start the frontend (in another terminal):
+5. Start the frontend (in another terminal):
 
-    ```bash
+```bash
     make web
-    ```
+```
 
-5. Open http://localhost:5173. The page shows whether the API, Postgres, and Redis are healthy.
+6. Open http://localhost:5173. The page shows whether the API, Postgres, and Redis are healthy.
+
+Emails, like sign-up confirmations, never leave your machine: Mailpit catches them. Read them at http://localhost:8025.
 
 ## Common commands
 
-| Target | Description |
+| Command | Description |
 | --- | --- |
 | `make install` | Install backend and frontend dependencies |
-| `make format-check` | Check formatting without changing files |
-| `make check` | Run lint, format check, tests, and the frontend build |
-| `make up` | Start Postgres and Redis in the background |
-| `make down` | Stop Postgres and Redis |
-| `make api` | Start the backend with reload |
-| `make web` | Start the frontend development server |
-| `make lint` | Run Ruff and ESLint |
-| `make test` | Run backend pytest tests |
-| `make build` | Build the frontend production bundle |
-| `make format` | Format backend and frontend code |
+| `make up` | Start Postgres, Redis, and Mailpit in the background |
+| `make down` | Stop the services |
 | `make migrate` | Apply database migrations |
 | `make migration m="message"` | Generate a new migration from model changes |
+| `make test-db` | Create the test database (once) |
+| `make api` | Start the backend with reload |
+| `make web` | Start the frontend development server |
+| `make format` | Format backend and frontend code |
+| `make lint` | Run Ruff and ESLint |
+| `make format-check` | Check formatting without changing files |
+| `make test` | Run backend tests (needs Postgres running) |
+| `make build` | Build the frontend production bundle |
+| `make check` | Run lint, format check, tests, and the frontend build |
+
+Before committing, run `make format` and `make check`.
+
+## Contributing
+
+Run `make check` before pushing. CI runs the same checks on every push to `main`.
 
 ## More details
 
-- [Backend README](backend/README.md): API setup, health checks, tests
+- [Backend README](backend/README.md): API setup, endpoints, sign-up flow, migrations, tests
 - [Frontend README](frontend/README.md): frontend setup, API proxy, scripts

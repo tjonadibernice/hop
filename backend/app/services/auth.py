@@ -10,112 +10,111 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.email import Email
-from app.models.user import User
+from app.models import User
 from app.security import hash_password
 
+VERIFICATION_TOKEN_TTL_SECONDS = 24 * 60 * 60
 
-async def create_verification_token(redis: Redis, user_id: uuid.UUID | str) -> str:
-    token = secrets.token_urlsafe(32)
+
+def _verification_key(token: str) -> str:
+    """Redis key for a token. Only the token's hash is stored, never the token."""
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    key = f"email_verify:{token_hash}"
-    await redis.set(key, str(user_id), ex=86_400)
+    return f"email_verify:{token_hash}"
+
+
+async def create_verification_token(redis: Redis, user_id: uuid.UUID) -> str:
+    token = secrets.token_urlsafe(32)
+    await redis.set(
+        _verification_key(token), str(user_id), ex=VERIFICATION_TOKEN_TTL_SECONDS
+    )
     return token
 
 
-def _confirm_email_body(token: str | None = None) -> str:
-    if token:
-        return (
-            "Welcome to Hop! Confirm your email by opening this link within 24 hours:\n\n"
-            f"{settings.app_base_url}/verify-email?token={token}\n\n"
+def _confirmation_email(to: str, token: str) -> Email:
+    link = f"{settings.app_base_url}/verify-email?token={token}"
+    return Email(
+        to=to,
+        subject="Confirm your email",
+        body=(
+            "Welcome to Hop! Confirm your email by opening this link "
+            "within 24 hours:\n\n"
+            f"{link}\n\n"
             "If you didn't sign up, you can ignore this email."
-        )
-
-    return (
-        "Welcome to Hop! A confirmation email is on the way for your account. "
-        "Please use the most recent link we sent you within 24 hours. If you didn't sign up, "
-        "you can ignore this email."
+        ),
     )
 
 
-def _already_registered_email_body() -> str:
-    return (
-        "Someone tried to create a Hop account with this email. You already have an account, "
-        "so you can log in instead. If this wasn't you, you can ignore this email."
+def _already_registered_email(to: str) -> Email:
+    return Email(
+        to=to,
+        subject="You already have a Hop account",
+        body=(
+            "Someone tried to create a Hop account with this email. "
+            "You already have an account, so you can log in instead.\n\n"
+            "If this wasn't you, you can ignore this email."
+        ),
     )
 
 
-async def start_signup(session: AsyncSession, redis: Redis, email: str, password: str) -> Email:
-    normalized_email = email.strip().lower()
+async def _get_user_by_email(session: AsyncSession, email: str) -> User | None:
+    return await session.scalar(select(User).where(User.email == email))
+
+
+async def _create_user(session: AsyncSession, email: str, password_hash: str) -> User:
+    user = User(email=email, password_hash=password_hash)
+    session.add(user)
+    try:
+        await session.commit()
+    except IntegrityError:
+        # Another sign-up with the same email committed between our lookup and
+        # our insert. Use the account that won the race instead of failing.
+        await session.rollback()
+        existing = await _get_user_by_email(session, email)
+        if existing is None:
+            raise
+        return existing
+    return user
+
+
+async def start_signup(
+    session: AsyncSession, redis: Redis, email: str, password: str
+) -> Email:
+    """Handle a sign-up and return the email to send.
+
+    The caller always responds the same way, so only the inbox owner
+    learns whether the email already had an account.
+    """
+    email = email.strip().lower()
+    # Hash first, in every case, so response time doesn't reveal which case ran
     password_hash = hash_password(password)
 
-    user = await session.scalar(select(User).where(User.email == normalized_email))
-
+    user = await _get_user_by_email(session, email)
     if user is None:
-        user = User(email=normalized_email, password_hash=password_hash)
-        session.add(user)
-
-        try:
-            await session.commit()
-        except IntegrityError:
-            await session.rollback()
-            user = await session.scalar(select(User).where(User.email == normalized_email))
-            # Another signup won the race before our insert committed. Treat this as the
-            # existing-unverified-user case rather than failing, so the action remains
-            # safe and idempotent for the user who is already in the system.
-            if user is None:
-                return Email(
-                    to=normalized_email,
-                    subject="Confirm your email",
-                    body=_confirm_email_body(),
-                )
-
-        if user is not None and user.email_verified_at is None:
-            token = await create_verification_token(redis, user.id)
-            return Email(
-                to=normalized_email,
-                subject="Confirm your email",
-                body=_confirm_email_body(token),
-            )
-
-        if user is not None and user.email_verified_at is not None:
-            return Email(
-                to=normalized_email,
-                subject="Account already exists",
-                body=_already_registered_email_body(),
-            )
-
-    if user.email_verified_at is None:
+        user = await _create_user(session, email, password_hash)
+    elif user.email_verified_at is None:
+        # Unverified accounts belong to whoever can read the inbox,
+        # so the latest sign-up sets the password
         user.password_hash = password_hash
         await session.commit()
-        token = await create_verification_token(redis, user.id)
-        return Email(
-            to=normalized_email,
-            subject="Confirm your email",
-            body=_confirm_email_body(token),
-        )
 
-    return Email(
-        to=normalized_email,
-        subject="Account already exists",
-        body=_already_registered_email_body(),
-    )
+    if user.email_verified_at is not None:
+        return _already_registered_email(email)
+
+    token = await create_verification_token(redis, user.id)
+    return _confirmation_email(email, token)
 
 
 async def verify_email(session: AsyncSession, redis: Redis, token: str) -> bool:
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    key = f"email_verify:{token_hash}"
-    user_id = await redis.getdel(key)
-
+    # GETDEL reads and deletes in one step, so each token works only once
+    user_id = await redis.getdel(_verification_key(token))
     if user_id is None:
         return False
 
-    user_id_str = user_id.decode() if isinstance(user_id, bytes) else str(user_id)
-    user = await session.get(User, uuid.UUID(user_id_str))
+    user = await session.get(User, uuid.UUID(user_id))
     if user is None:
         return False
 
     if user.email_verified_at is None:
         user.email_verified_at = datetime.now(UTC)
         await session.commit()
-
     return True
