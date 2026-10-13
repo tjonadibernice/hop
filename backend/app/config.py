@@ -18,5 +18,9 @@ class Settings(BaseSettings):
     mail_from: str = "Hop <no-reply@hop.local>"
     app_base_url: str = "http://localhost:5173"
 
+    session_cookie_name: str = "hop_session"
+    session_ttl_seconds: int = 7 * 24 * 60 * 60  # 7 days
+    cookie_secure: bool = False  # set to true in production (HTTPS only)
+
 
 settings = Settings()

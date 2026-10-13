@@ -1,5 +1,3 @@
-import hashlib
-import secrets
 import uuid
 from datetime import UTC, datetime
 
@@ -11,19 +9,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.email import Email
 from app.models import User
-from app.security import hash_password
+from app.security import (
+    DUMMY_PASSWORD_HASH,
+    generate_token,
+    hash_password,
+    hash_token,
+    password_needs_rehash,
+    verify_password,
+)
 
 VERIFICATION_TOKEN_TTL_SECONDS = 24 * 60 * 60
 
 
 def _verification_key(token: str) -> str:
     """Redis key for a token. Only the token's hash is stored, never the token."""
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    return f"email_verify:{token_hash}"
+    return f"email_verify:{hash_token(token)}"
 
 
 async def create_verification_token(redis: Redis, user_id: uuid.UUID) -> str:
-    token = secrets.token_urlsafe(32)
+    token = generate_token()
     await redis.set(
         _verification_key(token), str(user_id), ex=VERIFICATION_TOKEN_TTL_SECONDS
     )
@@ -56,6 +60,10 @@ def _already_registered_email(to: str) -> Email:
     )
 
 
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
 async def _get_user_by_email(session: AsyncSession, email: str) -> User | None:
     return await session.scalar(select(User).where(User.email == email))
 
@@ -84,7 +92,7 @@ async def start_signup(
     The caller always responds the same way, so only the inbox owner
     learns whether the email already had an account.
     """
-    email = email.strip().lower()
+    email = _normalize_email(email)
     # Hash first, in every case, so response time doesn't reveal which case ran
     password_hash = hash_password(password)
 
@@ -118,3 +126,31 @@ async def verify_email(session: AsyncSession, redis: Redis, token: str) -> bool:
         user.email_verified_at = datetime.now(UTC)
         await session.commit()
     return True
+
+
+async def authenticate(session: AsyncSession, email: str, password: str) -> User | None:
+    """Return the user if the email and password match a verified account.
+
+    Every failure returns None, so the caller can't tell an unknown email,
+    a wrong password, and an unverified account apart.
+    """
+    user = await _get_user_by_email(session, _normalize_email(email))
+
+    if user is None:
+        # Do the same slow work as a real check, so timing doesn't reveal
+        # whether the email has an account
+        verify_password(DUMMY_PASSWORD_HASH, password)
+        return None
+
+    if not verify_password(user.password_hash, password):
+        return None
+
+    if user.email_verified_at is None:
+        return None
+
+    if password_needs_rehash(user.password_hash):
+        # Upgrade old hashes while we have the plain password
+        user.password_hash = hash_password(password)
+        await session.commit()
+
+    return user
