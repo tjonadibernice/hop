@@ -1,3 +1,4 @@
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -46,9 +47,11 @@ async def session_factory(
     engine = create_async_engine(migrated_test_database)
     yield async_sessionmaker(engine, expire_on_commit=False)
 
-    # Empty the users table after each test so tests don't affect each other
+    # Empty users and pages after each test so tests don't affect each other.
+    # CASCADE also empties tables that point to them (interests, interactions).
+    # Topics stay: they're reference data from the migrations.
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE users CASCADE"))
+        await conn.execute(text("TRUNCATE users, pages CASCADE"))
     await engine.dispose()
 
 
@@ -81,3 +84,18 @@ async def client(
         yield client
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def logged_in_client(
+    client: AsyncClient, email_sender: FakeEmailSender
+) -> AsyncClient:
+    """A client that's signed up, verified, and logged in as bernice@example.com."""
+    credentials = {"email": "bernice@example.com", "password": "first-password-123"}
+    await client.post("/auth/signup", json=credentials)
+    match = re.search(r"token=([\w-]+)", email_sender.sent[-1].body)
+    assert match is not None
+    await client.post("/auth/verify-email", json={"token": match.group(1)})
+    response = await client.post("/auth/login", json=credentials)
+    assert response.status_code == 200
+    return client

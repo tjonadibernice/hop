@@ -40,12 +40,13 @@ hop/
     cp .env.example .env
 ```
 
-2. Install dependencies, start the services, and set up the database:
+2. Install dependencies, start the services, set up the database, and load the starter pages:
 
 ```bash
     make install
     make up
     make migrate
+    make seed
 ```
 
 3. Create the test database (needed once, for `make test`):
@@ -79,10 +80,11 @@ Emails, like sign-up confirmations, never leave your machine: Mailpit catches th
 | `make down` | Stop the services |
 | `make migrate` | Apply database migrations |
 | `make migration m="message"` | Generate a new migration from model changes |
+| `make seed` | Load the starter pages (safe to run again) |
 | `make test-db` | Create the test database (once) |
 | `make api` | Start the backend with reload |
 | `make web` | Start the frontend development server |
-| `make format` | Format backend and frontend code |
+| `make format` | Fix lint issues and format backend and frontend code |
 | `make lint` | Run Ruff and ESLint |
 | `make format-check` | Check formatting without changing files |
 | `make test` | Run backend tests (needs Postgres running) |
@@ -97,5 +99,5 @@ Run `make check` before pushing. CI runs the same checks on every push to `main`
 
 ## More details
 
-- [Backend README](backend/README.md): API setup, endpoints, sign-up flow, migrations, tests
+- [Backend README](backend/README.md): API setup, endpoints, sign-up and login, hopping, migrations, tests
 - [Frontend README](frontend/README.md): frontend setup, API proxy, scripts

@@ -6,7 +6,7 @@ from app.cache import create_redis
 from app.config import settings
 from app.db import create_db_engine, create_session_factory
 from app.email import SmtpEmailSender
-from app.routers import auth, health
+from app.routers import auth, health, hop, interests, topics
 
 
 @asynccontextmanager
@@ -31,3 +31,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Hop API", lifespan=lifespan)
 app.include_router(health.router)
 app.include_router(auth.router)
+app.include_router(topics.router)
+app.include_router(interests.router)
+app.include_router(hop.router)

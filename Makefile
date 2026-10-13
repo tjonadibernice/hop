@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format format-check install migrate migration check test-db
+.PHONY: up down api web lint test build format format-check install migrate migration seed check test-db
 
 up:
 	docker compose up -d
@@ -22,6 +22,9 @@ migrate:
 migration:
 	cd backend && uv run alembic revision --autogenerate -m "$(m)"
 
+seed:
+	cd backend && uv run python -m scripts.seed_pages
+
 lint:
 	cd backend && uv run ruff check .
 	cd frontend && npm run lint
@@ -33,7 +36,7 @@ build:
 	cd frontend && npm run build
 
 format:
-	cd backend && uv run ruff format .
+	cd backend && uv run ruff check --fix . && uv run ruff format .
 	cd frontend && npm run format
 
 format-check:
