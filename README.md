@@ -10,7 +10,7 @@ Hop is a discovery app: one click on the Hop button shows a page the user is lik
 
 | Layer | Technology |
 | --- | --- |
-| Frontend | React, TypeScript, Vite |
+| Frontend | React, TypeScript, Vite, React Router |
 | Backend | Python, FastAPI, SQLAlchemy, Alembic |
 | Database | PostgreSQL with pgvector |
 | Cache, sessions, and queues | Redis |
@@ -67,9 +67,9 @@ hop/
     make web
 ```
 
-6. Open http://localhost:5173. The page shows whether the API, Postgres, and Redis are healthy.
+6. Open http://localhost:5173 and sign up. The confirmation email arrives in Mailpit at http://localhost:8025; open the link, confirm, log in, and pick your interests.
 
-Emails, like sign-up confirmations, never leave your machine: Mailpit catches them. Read them at http://localhost:8025.
+Emails never leave your machine: Mailpit catches all of them.
 
 ## Common commands
 
@@ -100,4 +100,4 @@ Run `make check` before pushing. CI runs the same checks on every push to `main`
 ## More details
 
 - [Backend README](backend/README.md): API setup, endpoints, sign-up and login, hopping, migrations, tests
-- [Frontend README](frontend/README.md): frontend setup, API proxy, scripts
+- [Frontend README](frontend/README.md): pages, login state, API proxy, scripts
