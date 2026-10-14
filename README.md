@@ -2,7 +2,7 @@
 
 Hop is a discovery app: one click on the Hop button shows a page the user is likely to enjoy but would never have found.
 
-**Status:** in progress. Phase 1 (project skeleton) is complete; Phase 2 (Hop MVP) is in progress.
+**Status:** in progress. Phase 1 (project skeleton) is complete; Phase 2 (Hop MVP) is nearly complete: users can sign up, pick interests, hop, and like pages.
 
 [![CI](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml/badge.svg)](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml)
 
@@ -40,13 +40,14 @@ hop/
     cp .env.example .env
 ```
 
-2. Install dependencies, start the services, set up the database, and load the starter pages:
+2. Install dependencies, start the services, set up the database, load the starter pages, and check which pages can be shown inside Hop:
 
 ```bash
     make install
     make up
     make migrate
     make seed
+    make check-embeds
 ```
 
 3. Create the test database (needed once, for `make test`):
@@ -67,7 +68,7 @@ hop/
     make web
 ```
 
-6. Open http://localhost:5173 and sign up. The confirmation email arrives in Mailpit at http://localhost:8025; open the link, confirm, log in, and pick your interests.
+6. Open http://localhost:5173 and sign up. The confirmation email arrives in Mailpit at http://localhost:8025; open the link, confirm, log in, pick your interests, and press **Hop**.
 
 Emails never leave your machine: Mailpit catches all of them.
 
@@ -81,6 +82,7 @@ Emails never leave your machine: Mailpit catches all of them.
 | `make migrate` | Apply database migrations |
 | `make migration m="message"` | Generate a new migration from model changes |
 | `make seed` | Load the starter pages (safe to run again) |
+| `make check-embeds` | Check which pages allow being shown in an iframe (only unchecked pages) |
 | `make test-db` | Create the test database (once) |
 | `make api` | Start the backend with reload |
 | `make web` | Start the frontend development server |
@@ -99,5 +101,5 @@ Run `make check` before pushing. CI runs the same checks on every push to `main`
 
 ## More details
 
-- [Backend README](backend/README.md): API setup, endpoints, sign-up and login, hopping, migrations, tests
-- [Frontend README](frontend/README.md): pages, login state, API proxy, scripts
+- [Backend README](backend/README.md): API setup, endpoints, sign-up and login, hopping, iframe checks, migrations, tests
+- [Frontend README](frontend/README.md): pages, the Hop screen, login state, API proxy, scripts

@@ -19,3 +19,15 @@ export type Interests = {
 export type Message = {
   message: string;
 };
+
+export type Page = {
+  id: string;
+  url: string;
+  title: string;
+  summary: string | null;
+  /** false: the site refuses iframes. null: not checked yet. */
+  embeddable: boolean | null;
+  topics: Topic[];
+};
+
+export type Reaction = "like" | "dislike";

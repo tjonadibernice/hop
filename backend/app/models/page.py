@@ -18,6 +18,9 @@ class Page(Base):
     url: Mapped[str] = mapped_column(String(2048), unique=True)
     title: Mapped[str] = mapped_column(String(300))
     summary: Mapped[str | None] = mapped_column(Text)
+    # Whether other sites may show this page in an iframe.
+    # None means not checked yet (see scripts/check_embeddable.py).
+    embeddable: Mapped[bool | None]
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

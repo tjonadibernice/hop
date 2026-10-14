@@ -20,6 +20,10 @@ export default function Layout() {
         <nav className="nav">
           {user ? (
             <>
+              <NavLink to="/" end>
+                Hop
+              </NavLink>
+              <NavLink to="/likes">Likes</NavLink>
               <NavLink to="/interests">Interests</NavLink>
               <span className="nav-email">{user.email}</span>
               <button

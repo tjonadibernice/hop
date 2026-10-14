@@ -2,8 +2,9 @@ import { BrowserRouter, Route, Routes } from "react-router";
 import AuthProvider from "./auth/AuthProvider";
 import RequireAuth from "./auth/RequireAuth";
 import Layout from "./components/Layout";
-import HomePage from "./pages/HomePage";
+import HopPage from "./pages/HopPage";
 import InterestsPage from "./pages/InterestsPage";
+import LikesPage from "./pages/LikesPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import VerifyEmailPage from "./pages/VerifyEmailPage";
@@ -18,7 +19,7 @@ function App() {
               index
               element={
                 <RequireAuth>
-                  <HomePage />
+                  <HopPage />
                 </RequireAuth>
               }
             />
@@ -27,6 +28,14 @@ function App() {
               element={
                 <RequireAuth>
                   <InterestsPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="likes"
+              element={
+                <RequireAuth>
+                  <LikesPage />
                 </RequireAuth>
               }
             />

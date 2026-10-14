@@ -12,4 +12,5 @@ class PageResponse(BaseModel):
     url: str
     title: str
     summary: str | None
+    embeddable: bool | None
     topics: list[TopicResponse]

@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format format-check install migrate migration seed check test-db
+.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds check test-db
 
 up:
 	docker compose up -d
@@ -24,6 +24,9 @@ migration:
 
 seed:
 	cd backend && uv run python -m scripts.seed_pages
+
+check-embeds:
+	cd backend && uv run python -m scripts.check_embeddable
 
 lint:
 	cd backend && uv run ruff check .

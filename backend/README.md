@@ -17,6 +17,7 @@ cp .env.example .env      # then fill in real values
 make up                   # start Postgres, Redis, and Mailpit
 make migrate              # apply database migrations
 make seed                 # load the starter pages
+make check-embeds         # check which pages can be shown in an iframe
 make test-db              # create the test database (once)
 ```
 
@@ -118,6 +119,24 @@ Users choose 3–15 topics as interests. Each `POST /hop` picks a random page th
 
 Users can only react to pages Hop has shown them. A page that wasn't shown and a page that doesn't exist get the same `404`, so the endpoint doesn't reveal which page IDs exist.
 
+### Showing pages in an iframe
+
+The frontend shows each page inside an iframe, but many sites forbid that with a response header. If a browser is told no, it shows a blank frame and doesn't tell our JavaScript why. So the backend checks each page's headers ahead of time and stores the answer in `pages.embeddable`:
+
+| Value | Meaning | What the frontend shows |
+| --- | --- | --- |
+| `true` | The site allows iframes | The page in an iframe |
+| `false` | The site forbids iframes | A card with an "Open in new tab" button |
+| `null` | Not checked yet, or the page couldn't be loaded | The iframe, plus a hint to open it in a new tab if it stays blank |
+
+`make check-embeds` (`scripts/check_embeddable.py`) fetches every page whose value is `null`, 5 at a time, with the `HopBot` user agent, and saves the result. Run it after `make seed` or after adding pages. The rules live in `app/services/embeds.py`, the same rules browsers use:
+
+1. If `Content-Security-Policy` has a `frame-ancestors` directive, it decides alone (browsers then ignore `X-Frame-Options`). Hop is an unknown site to them, so only `*` allows it.
+2. Otherwise, any `X-Frame-Options` value (`DENY`, `SAMEORIGIN`) blocks other sites.
+3. `Content-Security-Policy-Report-Only` only reports problems and never blocks, so it's ignored.
+
+A site can change its headers later; set `embeddable` back to `NULL` to check a page again.
+
 ### Starter pages
 
 `make seed` loads the pages listed in `scripts/seed_pages.json` (3 per topic). It skips URLs that already exist, so it's safe to run again. To add pages, add entries to the JSON file with a URL, title, summary, and topic slugs.
@@ -142,7 +161,7 @@ uv run ruff check --fix .
 uv run ruff format .
 ```
 
-Tests run against a real Postgres database (`TEST_DATABASE_URL`), so Postgres must be running. All migrations are applied to the test database at the start of each run, and users and pages are emptied after each test. Redis and email are replaced with in-memory fakes, so tests never send real email.
+The iframe checker's tests use fake HTTP responses (`httpx.MockTransport`), so they never touch the internet. Tests run against a real Postgres database (`TEST_DATABASE_URL`), so Postgres must be running. All migrations are applied to the test database at the start of each run, and users and pages are emptied after each test. Redis and email are replaced with in-memory fakes, so tests never send real email.
 
 ## Project structure
 
@@ -169,6 +188,7 @@ app/
 │   └── topics.py
 ├── services/            # Business logic
 │   ├── auth.py          # Sign-up, email verification, and login
+│   ├── embeds.py        # Whether a page allows being shown in an iframe
 │   ├── hop.py           # Picking the next page
 │   ├── reactions.py     # Likes, dislikes, and the likes list
 │   ├── sessions.py      # Session tokens in Redis
@@ -183,11 +203,13 @@ app/
 migrations/
 └── versions/            # Migration files, applied in order
 scripts/
+├── check_embeddable.py  # Checks unchecked pages for iframe support
 ├── seed_pages.json      # Starter pages
 └── seed_pages.py        # Loads the starter pages
 tests/
 ├── conftest.py          # Test database, fakes, test clients
 ├── test_auth.py         # Sign-up and email verification
+├── test_embeds.py       # Iframe header rules
 ├── test_health.py
 ├── test_hop.py
 ├── test_interests.py
