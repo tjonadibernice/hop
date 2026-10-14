@@ -1,6 +1,6 @@
 # Hop Backend
 
-FastAPI service for Hop. It serves the API, connects to Postgres (with pgvector) and Redis, handles sign-up with email verification and login with server-side sessions, stores users' interests, and serves pages through the Hop endpoint.
+FastAPI service for Hop. It serves the API, connects to Postgres (with pgvector) and Redis, handles sign-up with email verification and login with server-side sessions, stores users' interests, serves pages through the Hop endpoint, and records likes and dislikes.
 
 ## Requirements
 
@@ -68,6 +68,8 @@ uv run uvicorn app.main:app --reload
 | `GET /me/interests` | Yes | The user's chosen topics | `200` with the list |
 | `PUT /me/interests` | Yes | Replace the user's interests (3–15 topic IDs, no duplicates) | `200`, `400` for unknown topics, or `422` |
 | `POST /hop` | Yes | A random unseen page from the user's interests; records a view | `200` with the page, `409` without interests, or `404` when everything has been seen |
+| `PUT /pages/{page_id}/reaction` | Yes | Like or dislike a page Hop has shown the user (`{"reaction": "like"}` or `"dislike"`) | `200`, `404` if the page wasn't shown to the user, or `422` |
+| `GET /me/likes` | Yes | Pages the user currently likes, newest first | `200` with the list |
 
 ## Sign-up flow
 
@@ -108,8 +110,13 @@ Not yet implemented: rate limiting for login attempts.
 Users choose 3–15 topics as interests. Each `POST /hop` picks a random page that belongs to at least one of those topics and that the user hasn't seen, then records a `view` in the `interactions` table.
 
 - `POST` is used instead of `GET` because each hop changes data (it records a view), and `GET` requests must not change anything.
-- `interactions` is an append-only log of views (and later likes and dislikes). It also answers "has this user seen this page?"
 - Pages are picked with `ORDER BY random()`, a simple baseline that works well for thousands of pages. The recommender will replace it.
+
+### Likes and dislikes
+
+`interactions` is an append-only log: rows are added, never changed. A user's current reaction to a page is their most recent `like` or `dislike`, so changing a like to a dislike adds a new row, and the full history stays available for the recommender. `GET /me/likes` finds each page's latest reaction with Postgres's `DISTINCT ON` and returns the pages whose latest reaction is a like.
+
+Users can only react to pages Hop has shown them. A page that wasn't shown and a page that doesn't exist get the same `404`, so the endpoint doesn't reveal which page IDs exist.
 
 ### Starter pages
 
@@ -158,10 +165,12 @@ app/
 ├── schemas/             # Request and response shapes
 │   ├── auth.py
 │   ├── pages.py
+│   ├── reactions.py
 │   └── topics.py
 ├── services/            # Business logic
 │   ├── auth.py          # Sign-up, email verification, and login
 │   ├── hop.py           # Picking the next page
+│   ├── reactions.py     # Likes, dislikes, and the likes list
 │   ├── sessions.py      # Session tokens in Redis
 │   └── topics.py        # Topics and interests
 └── routers/             # Endpoints
@@ -169,6 +178,7 @@ app/
     ├── health.py
     ├── hop.py
     ├── interests.py
+    ├── reactions.py
     └── topics.py
 migrations/
 └── versions/            # Migration files, applied in order
@@ -181,6 +191,7 @@ tests/
 ├── test_health.py
 ├── test_hop.py
 ├── test_interests.py
+├── test_reactions.py    # Likes, dislikes, and the likes list
 ├── test_security.py
 ├── test_sessions.py     # Login, logout, and the current user
 └── test_topics.py
