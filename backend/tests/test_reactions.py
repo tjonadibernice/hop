@@ -19,8 +19,10 @@ async def hopper(logged_in_client, session_factory):
             session.add(
                 Page(
                     url=f"https://example.com/page/{number}",
+                    canonical_url=f"https://example.com/page/{number}",
                     title=f"Page {number}",
                     topics=[topics[0]],
+                    status="approved",
                 )
             )
         await session.commit()

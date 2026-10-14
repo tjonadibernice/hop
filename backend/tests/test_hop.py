@@ -10,14 +10,21 @@ async def topics_by_slug(session_factory) -> dict[str, Topic]:
         return {topic.slug: topic for topic in await session.scalars(select(Topic))}
 
 
-async def add_pages(session_factory, topic: Topic, count: int) -> None:
+async def add_pages(
+    session_factory, topic: Topic, count: int, status: str = "approved"
+) -> None:
     async with session_factory() as session:
         for number in range(count):
+            # Approved pages keep the short URL the other tests expect
+            folder = topic.slug if status == "approved" else f"{topic.slug}/{status}"
+            url = f"https://example.com/{folder}/{number}"
             session.add(
                 Page(
-                    url=f"https://example.com/{topic.slug}/{number}",
+                    url=url,
+                    canonical_url=url,
                     title=f"{topic.name} {number}",
                     topics=[await session.merge(topic)],
+                    status=status,
                 )
             )
         await session.commit()
@@ -95,3 +102,23 @@ async def test_hop_records_a_view(logged_in_client, session_factory, topics_by_s
             .where(Interaction.kind == "view")
         )
     assert views == 1
+
+
+async def test_hop_only_shows_approved_pages(
+    logged_in_client, session_factory, topics_by_slug
+):
+    chosen = [
+        topics_by_slug[s]
+        for s in ("cybersecurity", "data-databases", "habits-routines")
+    ]
+    for status in ("pending", "rejected", "needs_review", "dead"):
+        await add_pages(session_factory, chosen[0], 2, status=status)
+    await add_pages(session_factory, chosen[0], 1)
+    await choose_interests(logged_in_client, chosen)
+
+    first = await logged_in_client.post("/hop")
+    second = await logged_in_client.post("/hop")
+
+    assert first.status_code == 200
+    assert first.json()["url"] == "https://example.com/cybersecurity/0"
+    assert second.status_code == 404

@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.db import create_db_engine, create_session_factory
 from app.models import Page
-from app.services.embeds import USER_AGENT, check_embeddable
+from app.services.embeds import check_embeddable
 
 MAX_CONCURRENT_REQUESTS = 5
 
@@ -28,7 +28,7 @@ async def main() -> None:
     async with (
         session_factory() as session,
         httpx.AsyncClient(
-            headers={"User-Agent": USER_AGENT},
+            headers={"User-Agent": settings.crawler_user_agent},
             follow_redirects=True,
             timeout=10,
         ) as client,

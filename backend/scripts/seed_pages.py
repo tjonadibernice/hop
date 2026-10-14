@@ -1,5 +1,7 @@
 """Load the starter set of pages from seed_pages.json into the database.
 
+These pages are hand-picked, so they're stored as approved right away.
+
 Safe to run more than once: pages that already exist (same URL) are skipped.
 
 Usage, from backend/:  uv run python -m scripts.seed_pages
@@ -13,6 +15,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.db import create_db_engine, create_session_factory
+from app.ingestion.urls import canonicalize_url
 from app.models import Page, Topic
 
 SEED_FILE = Path(__file__).with_name("seed_pages.json")
@@ -40,9 +43,12 @@ async def seed() -> None:
             session.add(
                 Page(
                     url=entry["url"],
+                    canonical_url=canonicalize_url(entry["url"]),
                     title=entry["title"],
                     summary=entry["summary"],
                     topics=[topics_by_slug[slug] for slug in entry["topics"]],
+                    # Hand-picked, so they skip review
+                    status="approved",
                 )
             )
             added += 1

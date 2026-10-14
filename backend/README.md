@@ -1,6 +1,6 @@
 # Hop Backend
 
-FastAPI service for Hop. It serves the API, connects to Postgres (with pgvector) and Redis, handles sign-up with email verification and login with server-side sessions, stores users' interests, serves pages through the Hop endpoint, and records likes and dislikes.
+FastAPI service for Hop. It serves the API, connects to Postgres (with pgvector) and Redis, handles sign-up with email verification and login with server-side sessions, stores users' interests, serves pages through the Hop endpoint, and records likes and dislikes. A background worker runs the ingestion pipeline, which fetches, cleans, and deduplicates new pages.
 
 ## Requirements
 
@@ -18,6 +18,8 @@ make up                   # start Postgres, Redis, and Mailpit
 make migrate              # apply database migrations
 make seed                 # load the starter pages
 make check-embeds         # check which pages can be shown in an iframe
+make worker               # (optional) start the ingestion worker
+make ingest               # (optional) queue the URLs in scripts/sources.txt
 make test-db              # create the test database (once)
 ```
 
@@ -43,6 +45,9 @@ Settings are read from the root `.env`. Environment variables take priority.
 | `SESSION_COOKIE_NAME` | No | `hop_session` | Name of the session cookie |
 | `SESSION_TTL_SECONDS` | No | `604800` (7 days) | How long a login lasts |
 | `COOKIE_SECURE` | No | `false` | Send the session cookie over HTTPS only; set to `true` in production |
+| `CRAWLER_USER_AGENT` | No | `HopBot/0.1 (+https://github.com/tjonadibernice/hop)` | How the crawler identifies itself to websites |
+| `CRAWL_DELAY_SECONDS` | No | `1.0` | Minimum time between two requests to the same website |
+| `CRAWL_ALLOW_PRIVATE_HOSTS` | No | `false` | Lets the crawler fetch localhost and private addresses. Only for local testing |
 
 ## Run the API
 
@@ -108,7 +113,7 @@ Not yet implemented: rate limiting for login attempts.
 
 ## Hopping
 
-Users choose 3–15 topics as interests. Each `POST /hop` picks a random page that belongs to at least one of those topics and that the user hasn't seen, then records a `view` in the `interactions` table.
+Users choose 3–15 topics as interests. Each `POST /hop` picks a random **approved** page that belongs to at least one of those topics and that the user hasn't seen, then records a `view` in the `interactions` table.
 
 - `POST` is used instead of `GET` because each hop changes data (it records a view), and `GET` requests must not change anything.
 - Pages are picked with `ORDER BY random()`, a simple baseline that works well for thousands of pages. The recommender will replace it.
@@ -139,7 +144,51 @@ A site can change its headers later; set `embeddable` back to `NULL` to check a 
 
 ### Starter pages
 
-`make seed` loads the pages listed in `scripts/seed_pages.json` (3 per topic). It skips URLs that already exist, so it's safe to run again. To add pages, add entries to the JSON file with a URL, title, summary, and topic slugs.
+`make seed` loads the pages listed in `scripts/seed_pages.json` (3 per topic) as `approved`, since they're hand-picked. It skips URLs that already exist, so it's safe to run again. To add pages, add entries to the JSON file with a URL, title, summary, and topic slugs.
+
+## Ingestion pipeline
+
+The ingestion pipeline turns a list of URLs into stored pages, in the background. The API and the worker share the database and Redis but run as separate processes.
+
+```bash
+make worker                    # terminal 1: start the worker
+make ingest                    # terminal 2: queue scripts/sources.txt
+make ingest f=my-list.txt      # or your own list (one URL per line, # for comments)
+```
+
+For each URL, the worker (`app/ingestion/pipeline.py`):
+
+1. **Normalizes the URL** (`urls.py`): lowercase host, no default port, no `#fragment`, no tracking parameters (`utm_*`, `fbclid`, ...), sorted query. Skips it if that URL is already stored.
+2. **Fetches it safely** (`fetch.py`), checking every redirect hop:
+    - **SSRF protection** (`network.py`): refuses hosts that resolve to private, loopback, link-local (including the cloud metadata address `169.254.169.254`), or other non-public addresses.
+    - **robots.txt**: obeys the site's rules for `HopBot`, cached in Redis for 24 hours. A missing file (4xx) allows everything; an unreachable one (5xx) blocks everything ([RFC 9309](https://www.rfc-editor.org/rfc/rfc9309)).
+    - **Politeness** (`politeness.py`): at most one request per site every `CRAWL_DELAY_SECONDS`, enforced through Redis, so it holds across workers.
+    - **Limits**: 5 redirects, 2 MB per page, HTML only.
+3. **Extracts the article** (`extract.py`) with trafilatura: main text and title, without menus and footers. Pages under 200 words are skipped.
+4. **Checks for duplicates**: the page's own `<link rel="canonical">` (trusted only on the same site), then **SimHash** (`simhash.py`) for near-duplicates such as the same article on another URL.
+5. **Stores it as `pending`**, with the text, word count, fingerprint, and whether it can be shown in an iframe. Hop only shows `approved` pages; the next phase adds the steps that approve or reject them.
+
+| Outcome | Meaning |
+| --- | --- |
+| `added` | Stored as a pending page |
+| `duplicate` | The same URL (or its canonical URL) is already stored |
+| `near_duplicate` | The same text is already stored under another URL |
+| `invalid_url` / `unsafe_url` | Not an http(s) URL / points to a private address |
+| `blocked_by_robots` | The site's robots.txt asks us not to fetch it |
+| `fetch_failed` | 4xx response, unknown host, or still failing after retries |
+| `not_html` / `no_content` / `too_short` | Not a web page, no readable text, or under 200 words |
+
+Timeouts, network errors, `429`, and `5xx` responses are retried twice, after 10 and 60 seconds. Jobs go through a Redis Stream, so a job is only removed once a worker finishes it; results are kept in Redis for 7 days.
+
+**Page statuses:** `pending` (fetched, waiting for review), `approved` (shown by Hop), `rejected`, `needs_review` (for the curator agent or a person), and `dead` (stopped working).
+
+### How near-duplicate detection works
+
+SimHash gives each text a 64-bit fingerprint where similar texts get similar fingerprints. Hop treats fingerprints that differ in 7 bits or fewer as the same article. Copies with a different heading or footer land around 6 bits apart; unrelated articles land around 32.
+
+To avoid comparing against every stored page, each fingerprint is split into 8 bands of 8 bits, stored in `pages.simhash_bands` with a GIN index. Two fingerprints within 7 bits of each other must share at least one identical band (pigeonhole principle), so Postgres only returns pages that share a band (`&&`), and only those are compared bit by bit.
+
+Known limits: two near-duplicates processed at the same moment by different workers can both be stored, and the SSRF check doesn't yet protect against DNS rebinding (see `network.py`).
 
 ## Database migrations
 
@@ -161,7 +210,7 @@ uv run ruff check --fix .
 uv run ruff format .
 ```
 
-The iframe checker's tests use fake HTTP responses (`httpx.MockTransport`), so they never touch the internet. Tests run against a real Postgres database (`TEST_DATABASE_URL`), so Postgres must be running. All migrations are applied to the test database at the start of each run, and users and pages are emptied after each test. Redis and email are replaced with in-memory fakes, so tests never send real email.
+The iframe checker and crawler tests use a fake internet (`tests/web.py`, built on `httpx.MockTransport`), so they never touch the network. Tests run against a real Postgres database (`TEST_DATABASE_URL`), so Postgres must be running. All migrations are applied to the test database at the start of each run, and users and pages are emptied after each test. Redis and email are replaced with in-memory fakes, so tests never send real email.
 
 ## Project structure
 
@@ -172,8 +221,17 @@ app/
 ├── db.py                # Postgres engine and session factory
 ├── cache.py             # Redis client
 ├── dependencies.py      # Shared dependencies (database, Redis, email, current user)
+├── worker.py            # Background worker (taskiq) for the ingestion pipeline
 ├── email.py             # Email sending (SMTP)
 ├── security.py          # Password hashing (Argon2) and token helpers
+├── ingestion/           # Ingestion pipeline
+│   ├── pipeline.py      # The steps for one URL, and retries
+│   ├── urls.py          # URL normalization
+│   ├── network.py       # SSRF protection
+│   ├── fetch.py         # Safe fetching: redirects, robots.txt, size limits
+│   ├── politeness.py    # One request per site at a time
+│   ├── extract.py       # Article text, title, canonical link
+│   └── simhash.py       # Near-duplicate fingerprints
 ├── models/              # SQLAlchemy models (tables)
 │   ├── base.py          # Base class and constraint naming convention
 │   ├── associations.py  # page_topics and user_interests link tables
@@ -204,12 +262,20 @@ migrations/
 └── versions/            # Migration files, applied in order
 scripts/
 ├── check_embeddable.py  # Checks unchecked pages for iframe support
+├── enqueue_urls.py      # Queues a URL list for the worker
+├── sources.txt          # Sample URLs for make ingest
 ├── seed_pages.json      # Starter pages
 └── seed_pages.py        # Loads the starter pages
 tests/
 ├── conftest.py          # Test database, fakes, test clients
 ├── test_auth.py         # Sign-up and email verification
 ├── test_embeds.py       # Iframe header rules
+├── test_fetch.py        # Redirects, robots.txt, limits, politeness
+├── test_network.py      # SSRF address checks
+├── test_pipeline.py     # Ingestion outcomes and retries
+├── test_simhash.py      # Fingerprints and the band guarantee
+├── test_urls.py         # URL normalization
+├── web.py               # A fake internet for crawler tests
 ├── test_health.py
 ├── test_hop.py
 ├── test_interests.py

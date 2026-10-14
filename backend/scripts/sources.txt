@@ -1,0 +1,10 @@
+# Candidate pages for the ingestion pipeline: one URL per line.
+# Queue them with:  make ingest   (or make ingest f=path/to/your-list.txt)
+# New pages are stored as "pending" and aren't shown by Hop until approved.
+
+https://12factor.net/
+https://martinfowler.com/articles/microservices.html
+https://www.joelonsoftware.com/2000/08/09/the-joel-test-12-steps-to-better-code/
+https://paulgraham.com/greatwork.html
+https://sre.google/sre-book/eliminating-toil/
+https://en.wikipedia.org/wiki/Spaced_repetition

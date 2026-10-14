@@ -22,5 +22,11 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 7 * 24 * 60 * 60  # 7 days
     cookie_secure: bool = False  # set to true in production (HTTPS only)
 
+    crawler_user_agent: str = "HopBot/0.1 (+https://github.com/tjonadibernice/hop)"
+    crawl_delay_seconds: float = 1.0  # minimum gap between requests to one site
+    # Lets the crawler fetch localhost and private addresses. Only for local
+    # testing: never turn this on where the crawler can reach real services.
+    crawl_allow_private_hosts: bool = False
+
 
 settings = Settings()

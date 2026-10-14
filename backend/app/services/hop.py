@@ -32,6 +32,7 @@ async def next_page(session: AsyncSession, user_id: uuid.UUID) -> Page | None:
 
     page = await session.scalar(
         select(Page)
+        .where(Page.status == "approved")
         .where(Page.id.in_(pages_in_interests))
         .where(Page.id.not_in(seen_page_ids))
         # Fine for thousands of pages; the recommender will replace this

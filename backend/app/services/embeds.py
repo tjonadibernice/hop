@@ -2,8 +2,6 @@
 
 import httpx
 
-USER_AGENT = "HopBot/0.1 (+https://github.com/tjonadibernice/hop)"
-
 
 def _frame_ancestors(csp_headers: list[str]) -> list[list[str]]:
     """The sources of every frame-ancestors directive in the CSP headers."""
