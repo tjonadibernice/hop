@@ -197,6 +197,8 @@ async def test_good_page_is_approved_with_everything_saved(
     assert saved.quality_score == 0.8
     assert len(saved.embedding) == EMBEDDING_DIMENSIONS
     assert saved.enriched_at is not None
+    # The first link check is scheduled 30 days out
+    assert (saved.next_check_at - saved.enriched_at).days == 30
     [(_, confidence)] = await stored_topics(session_factory, page.id)
     assert confidence == 0.9
 

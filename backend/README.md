@@ -1,6 +1,6 @@
 # Hop Backend
 
-FastAPI service for Hop. It serves the API, connects to Postgres (with pgvector) and Redis, handles sign-up with email verification and login with server-side sessions, stores users' interests, serves pages through the Hop endpoint, and records likes and dislikes. A background worker runs the ingestion pipeline, which fetches, cleans, and deduplicates new pages, then enriches them with an LLM and embeddings and decides which ones Hop shows.
+FastAPI service for Hop. It serves the API, connects to Postgres (with pgvector) and Redis, handles sign-up with email verification and login with server-side sessions, stores users' interests, serves pages through the Hop endpoint, and records likes and dislikes. A background worker runs the ingestion pipeline, which fetches, cleans, and deduplicates new pages, then enriches them with an LLM and embeddings and decides which ones Hop shows. A daily scheduled job re-checks approved pages and retires the ones that broke.
 
 ## Requirements
 
@@ -21,6 +21,7 @@ make check-embeds         # check which pages can be shown in an iframe
 make worker               # (optional) start the ingestion worker
 make ingest               # (optional) queue the URLs in scripts/sources.txt
 make enrich               # (optional) queue pending pages for enrichment
+make scheduler            # (optional) run the daily link check
 make test-db              # create the test database (once)
 ```
 
@@ -235,6 +236,29 @@ Put keys in the root `.env` (never commit it), then restart the worker. All have
 | `OPENAI_API_KEY` (optional) | [OpenAI platform](https://platform.openai.com/) | Paid |
 | `OLLAMA_BASE_URL` (optional) | Install [Ollama](https://ollama.com/), run `ollama pull llama3.2` | Free, runs on your machine |
 
+### Link-rot checks
+
+Pages break over time: they move, disappear, or their domain expires and turns into an ad page. `app/ingestion/linkrot.py` re-checks every approved page, using the same safe fetcher as ingestion (SSRF checks, robots.txt, politeness).
+
+```bash
+make worker         # terminal 1
+make scheduler      # terminal 2: queues the check every day at 03:00 UTC
+make check-links    # or run it right now
+```
+
+The scheduler (taskiq's `TaskiqScheduler`) reads the `schedule` label on the `check_links` task and queues it daily. Run only one scheduler; two would queue every check twice. The task finds up to 200 approved pages that are due (`next_check_at` has passed, or never checked), oldest first, and queues one `recheck_page` job each.
+
+| Result of the check | What happens |
+| --- | --- |
+| Page loads with a readable article | Next check in 30 days; failure count reset; iframe support updated |
+| Temporary trouble (timeout, 404, 5xx, no readable text) | Failure count +1; try again tomorrow |
+| 3 failures in a row | `dead` |
+| `410 Gone`, robots.txt now blocks Hop, or a private address | `dead` right away |
+| Now redirects to a different site (`www.` doesn't count) | `needs_review` |
+| Text changed by more than 24 of 64 SimHash bits | `needs_review` (for example, a parked domain) |
+
+Newly approved pages get their first check 30 days after enrichment. Hand-picked seed pages are fingerprinted on their first check. Hop only shows `approved` pages, so dead pages simply stop appearing.
+
 ## Database migrations
 
 Migrations are managed with [Alembic](https://alembic.sqlalchemy.org/) and live in `migrations/versions/`.
@@ -266,7 +290,7 @@ app/
 ├── db.py                # Postgres engine and session factory
 ├── cache.py             # Redis client
 ├── dependencies.py      # Shared dependencies (database, Redis, email, current user)
-├── worker.py            # Background worker (taskiq) for the ingestion pipeline
+├── worker.py            # Background worker and scheduler (taskiq)
 ├── email.py             # Email sending (SMTP)
 ├── security.py          # Password hashing (Argon2) and token helpers
 ├── ai/                  # AI service clients
@@ -274,6 +298,7 @@ app/
 │   └── embeddings.py    # Voyage embeddings
 ├── ingestion/           # Ingestion pipeline
 │   ├── pipeline.py      # The steps for one URL, and retries
+│   ├── linkrot.py       # Re-checks approved pages, retires broken ones
 │   ├── enrich.py        # LLM analysis, embedding, and routing rules
 │   ├── safety.py        # Blocklist and Safe Browsing
 │   ├── blocked_domains.txt  # Domains never stored
@@ -313,6 +338,7 @@ migrations/
 └── versions/            # Migration files, applied in order
 scripts/
 ├── check_embeddable.py  # Checks unchecked pages for iframe support
+├── check_links.py       # Runs the link check now
 ├── enqueue_enrichment.py  # Queues pending pages for enrichment
 ├── enqueue_urls.py      # Queues a URL list for the worker
 ├── sources.txt          # Sample URLs for make ingest
@@ -324,6 +350,7 @@ tests/
 ├── test_embeds.py       # Iframe header rules
 ├── test_embeddings.py   # Voyage client
 ├── test_enrich.py       # Routing rules and enrichment
+├── test_linkrot.py      # Link checks: due pages, failures, dead, changed
 ├── test_llm.py          # Provider failover and cooldowns
 ├── test_safety.py       # Blocklist and Safe Browsing
 ├── test_fetch.py        # Redirects, robots.txt, limits, politeness

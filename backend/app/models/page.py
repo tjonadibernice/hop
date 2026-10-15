@@ -38,6 +38,7 @@ class Page(Base):
             name="status",
         ),
         Index("ix_pages_status", "status"),
+        Index("ix_pages_next_check_at", "next_check_at"),
         # GIN index: finds rows whose array shares any element with a given array
         Index("ix_pages_simhash_bands", "simhash_bands", postgresql_using="gin"),
         # HNSW index for fast "most similar pages" queries (the recommender)
@@ -72,6 +73,10 @@ class Page(Base):
     simhash: Mapped[int | None] = mapped_column(BigInteger)
     simhash_bands: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Link-rot checks (see ingestion/linkrot.py): when to check the page next,
+    # and how many checks in a row have failed
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    check_failures: Mapped[int] = mapped_column(server_default=text("0"))
 
     # Filled in by enrichment (see ingestion/enrich.py)
     quality_score: Mapped[float | None] = mapped_column(Float)

@@ -1,20 +1,26 @@
 """Background worker for the ingestion pipeline (taskiq + Redis Streams).
 
-Two tasks: ingest_url fetches and stores a page as pending, then queues
-enrich_page, which decides whether the page is approved, rejected, or needs
-review.
+Tasks:
+- ingest_url: fetch a URL and store it as a pending page, then queue
+  enrich_page, which decides whether the page is approved, rejected, or
+  needs review.
+- check_links (daily, 03:00 UTC): queue recheck_page for every approved page
+  that's due, which retires pages that broke (see ingestion/linkrot.py).
 
-Run it with:  uv run taskiq worker app.worker:broker
-Queue URLs with:  uv run python -m scripts.enqueue_urls scripts/sources.txt
+Run the worker with:     uv run taskiq worker app.worker:broker
+Run the scheduler with:  uv run taskiq scheduler app.worker:scheduler
+Queue URLs with:         uv run python -m scripts.enqueue_urls scripts/sources.txt
 """
 
 import logging
 import uuid
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import httpx
-from taskiq import Context, TaskiqDepends, TaskiqEvents, TaskiqState
+from taskiq import Context, TaskiqDepends, TaskiqEvents, TaskiqScheduler, TaskiqState
+from taskiq.schedule_sources import LabelScheduleSource
 from taskiq_redis import RedisAsyncResultBackend, RedisStreamBroker
 
 from app.ai.embeddings import VoyageEmbedder
@@ -24,6 +30,7 @@ from app.config import settings
 from app.db import create_db_engine, create_session_factory
 from app.ingestion.enrich import EnrichServices, enrich_with_retries
 from app.ingestion.fetch import SafeFetcher
+from app.ingestion.linkrot import due_page_ids, recheck_page
 from app.ingestion.network import ensure_public_host
 from app.ingestion.pipeline import Outcome, ingest_with_retries
 from app.ingestion.safety import SafetyChecker, load_blocklist
@@ -44,6 +51,10 @@ broker = RedisStreamBroker(
 ).with_result_backend(
     RedisAsyncResultBackend(settings.redis_url, result_ex_time=RESULT_TTL_SECONDS)
 )
+
+# Reads the schedule="..." labels on the tasks below. Run exactly one
+# scheduler process: two would queue every scheduled job twice.
+scheduler = TaskiqScheduler(broker, sources=[LabelScheduleSource(broker)])
 
 
 @broker.on_event(TaskiqEvents.WORKER_STARTUP)
@@ -127,4 +138,32 @@ async def enrich_page_task(
     logger.info(
         "%s: %s (%s) via %s", result.status, page_id, result.reason, result.provider
     )
+    return {**asdict(result), "page_id": page_id}
+
+
+@broker.task(
+    task_name="check_links",
+    schedule=[{"cron": "0 3 * * *", "schedule_id": "daily-link-check"}],
+)
+async def check_links_task(context: Annotated[Context, TaskiqDepends()]) -> dict:
+    """Queue a recheck for every approved page that's due (up to a batch)."""
+    async with context.state.session_factory() as session:
+        page_ids = await due_page_ids(session, datetime.now(UTC))
+    for page_id in page_ids:
+        await recheck_page_task.kiq(str(page_id))
+    logger.info("link check: queued %d pages", len(page_ids))
+    return {"queued": len(page_ids)}
+
+
+@broker.task(task_name="recheck_page")
+async def recheck_page_task(
+    page_id: str, context: Annotated[Context, TaskiqDepends()]
+) -> dict[str, Any] | None:
+    state = context.state
+    async with state.session_factory() as session:
+        result = await recheck_page(session, state.fetcher, uuid.UUID(page_id))
+    if result is None:
+        return None
+    if result.outcome != "alive":
+        logger.info("link check %s: %s (%s)", result.outcome, page_id, result.reason)
     return {**asdict(result), "page_id": page_id}

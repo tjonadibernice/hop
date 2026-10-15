@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker ingest enrich check test-db
+.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links check test-db
 
 up:
 	docker compose up -d
@@ -31,6 +31,9 @@ check-embeds:
 worker:
 	cd backend && uv run taskiq worker app.worker:broker
 
+scheduler:
+	cd backend && uv run taskiq scheduler app.worker:scheduler
+
 # URL list to queue; override with: make ingest f=path/to/list.txt (relative to backend/)
 f ?= scripts/sources.txt
 ingest:
@@ -38,6 +41,9 @@ ingest:
 
 enrich:
 	cd backend && uv run python -m scripts.enqueue_enrichment
+
+check-links:
+	cd backend && uv run python -m scripts.check_links
 
 lint:
 	cd backend && uv run ruff check .

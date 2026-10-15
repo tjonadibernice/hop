@@ -10,7 +10,7 @@ import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel
@@ -32,6 +32,7 @@ APPROVE_QUALITY = 0.6
 REJECT_QUALITY = 0.3
 TOPIC_CONFIDENCE = 0.6
 RETRY_DELAYS_SECONDS = (30, 300)
+FIRST_LINK_CHECK_AFTER = timedelta(days=30)  # the page was just fetched
 
 
 class TopicLabel(BaseModel):
@@ -178,6 +179,8 @@ async def _save(
     page.status = decision.status
     page.status_reason = decision.reason[:300]
     page.enriched_at = datetime.now(UTC)
+    if decision.status == "approved":
+        page.next_check_at = page.enriched_at + FIRST_LINK_CHECK_AFTER
     if analysis is not None:
         page.summary = analysis.summary.strip()[:MAX_SUMMARY_CHARS] or None
         page.quality_score = min(max(analysis.quality, 0.0), 1.0)
