@@ -31,6 +31,10 @@ from app.models import EMBEDDING_DIMENSIONS
 
 logger = logging.getLogger(__name__)
 
+# httpx logs every request URL at INFO level. That's noisy for a crawler, and a
+# URL can carry secrets, so only its warnings are shown.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 RESULT_TTL_SECONDS = 7 * 24 * 60 * 60
 
 # Redis Streams keep a message until a worker acknowledges it, so a job isn't

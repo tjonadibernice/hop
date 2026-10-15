@@ -55,7 +55,8 @@ async def test_clean_url_is_safe():
 
     assert (result.safe, result.checked) == (True, True)
     assert requests[0].url.params["urls"] == "https://blog.test/post"
-    assert requests[0].url.params["key"] == "sb-key"
+    assert requests[0].headers["x-goog-api-key"] == "sb-key"
+    assert "sb-key" not in str(requests[0].url)  # never in the URL (logs)
 
 
 async def test_threats_make_a_url_unsafe():

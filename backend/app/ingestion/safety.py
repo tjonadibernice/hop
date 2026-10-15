@@ -52,8 +52,11 @@ class SafetyChecker:
             return SafetyResult(safe=True, checked=False)
 
         try:
+            # The key goes in a header, not the URL: URLs end up in logs
             response = await self.client.get(
-                SAFE_BROWSING_URL, params={"urls": url, "key": self.api_key}
+                SAFE_BROWSING_URL,
+                params={"urls": url},
+                headers={"X-Goog-Api-Key": self.api_key},
             )
         except httpx.HTTPError as error:
             raise SafetyCheckError(type(error).__name__) from error
