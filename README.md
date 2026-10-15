@@ -2,7 +2,7 @@
 
 Hop is a discovery app: one click on the Hop button shows a page the user is likely to enjoy but would never have found.
 
-**Status:** in progress. Phases 1 (skeleton) and 2 (Hop MVP) are complete: users can sign up, pick interests, hop, and like pages. Phase 3 (ingestion pipeline) is in progress: a background worker can now fetch, clean, and deduplicate new pages.
+**Status:** in progress. Phases 1 (skeleton) and 2 (Hop MVP) are complete: users can sign up, pick interests, hop, and like pages. Phase 3 (ingestion pipeline) is in progress: a background worker fetches, cleans, and deduplicates new pages, then uses an LLM, embeddings, and a safety screen to approve, reject, or flag them for review.
 
 [![CI](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml/badge.svg)](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml)
 
@@ -16,6 +16,7 @@ Hop is a discovery app: one click on the Hop button shows a page the user is lik
 | Cache, sessions, and queues | Redis |
 | Background jobs | taskiq with Redis Streams |
 | Article extraction | trafilatura |
+| Enrichment | Gemini, OpenAI, or Ollama (with failover); Voyage AI embeddings; Google Safe Browsing |
 | Local email | Mailpit (catches all outgoing email) |
 | Local environment | Docker Compose |
 | CI | GitHub Actions |
@@ -81,7 +82,7 @@ Emails never leave your machine: Mailpit catches all of them.
     make ingest
 ```
 
-The worker's log shows what happened to each URL. New pages are stored as `pending`, so they don't appear in Hop yet.
+The worker's log shows what happened to each URL. Each new page is then enriched and marked `approved` (it appears in Hop), `rejected`, or `needs_review`. Enrichment needs at least one LLM key in `.env`; see [Enrichment API keys](backend/README.md#enrichment-api-keys).
 
 ## Common commands
 
@@ -96,6 +97,7 @@ The worker's log shows what happened to each URL. New pages are stored as `pendi
 | `make check-embeds` | Check which pages allow being shown in an iframe (only unchecked pages) |
 | `make worker` | Start the background worker for the ingestion pipeline |
 | `make ingest` | Queue the URLs in `backend/scripts/sources.txt` (or `make ingest f=path/to/list.txt`) |
+| `make enrich` | Queue pending pages that haven't been enriched yet (after adding keys, or after an outage) |
 | `make test-db` | Create the test database (once) |
 | `make api` | Start the backend with reload |
 | `make web` | Start the frontend development server |

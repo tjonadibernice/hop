@@ -1,10 +1,15 @@
 """Background worker for the ingestion pipeline (taskiq + Redis Streams).
 
+Two tasks: ingest_url fetches and stores a page as pending, then queues
+enrich_page, which decides whether the page is approved, rejected, or needs
+review.
+
 Run it with:  uv run taskiq worker app.worker:broker
 Queue URLs with:  uv run python -m scripts.enqueue_urls scripts/sources.txt
 """
 
 import logging
+import uuid
 from dataclasses import asdict
 from typing import Annotated, Any
 
@@ -12,12 +17,17 @@ import httpx
 from taskiq import Context, TaskiqDepends, TaskiqEvents, TaskiqState
 from taskiq_redis import RedisAsyncResultBackend, RedisStreamBroker
 
+from app.ai.embeddings import VoyageEmbedder
+from app.ai.llm import LLMRouter, providers_from_settings
 from app.cache import create_redis
 from app.config import settings
 from app.db import create_db_engine, create_session_factory
+from app.ingestion.enrich import EnrichServices, enrich_with_retries
 from app.ingestion.fetch import SafeFetcher
 from app.ingestion.network import ensure_public_host
-from app.ingestion.pipeline import ingest_with_retries
+from app.ingestion.pipeline import Outcome, ingest_with_retries
+from app.ingestion.safety import SafetyChecker, load_blocklist
+from app.models import EMBEDDING_DIMENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +57,38 @@ async def startup(state: TaskiqState) -> None:
         resolver=None if settings.crawl_allow_private_hosts else ensure_public_host,
     )
 
+    # Model calls can be slow; give them their own client and timeout
+    state.ai_http = httpx.AsyncClient(timeout=60)
+    providers = providers_from_settings(settings)
+    if not providers:
+        logger.warning(
+            "No LLM provider configured: set GEMINI_API_KEY, OPENAI_API_KEY, "
+            "or OLLAMA_BASE_URL. Enrichment jobs will fail until you do."
+        )
+    state.enrich = EnrichServices(
+        llm=LLMRouter(state.ai_http, state.redis, providers),
+        safety=SafetyChecker(
+            state.ai_http,
+            api_key=settings.safe_browsing_api_key,
+            blocklist=load_blocklist(),
+        ),
+        embedder=(
+            VoyageEmbedder(
+                state.ai_http,
+                settings.voyage_api_key,
+                settings.voyage_model,
+                EMBEDDING_DIMENSIONS,
+            )
+            if settings.voyage_api_key
+            else None
+        ),
+    )
+
 
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def shutdown(state: TaskiqState) -> None:
     await state.http.aclose()
+    await state.ai_http.aclose()
     await state.redis.aclose()
     await state.engine.dispose()
 
@@ -62,8 +100,27 @@ async def ingest_url_task(
     state = context.state
     result = await ingest_with_retries(state.session_factory, state.fetcher, url)
     logger.info("%s: %s %s", result.outcome, url, result.detail or "")
+    if result.outcome == Outcome.ADDED and result.page_id is not None:
+        await enrich_page_task.kiq(str(result.page_id))
     return {
         **asdict(result),
         "outcome": str(result.outcome),
         "page_id": str(result.page_id) if result.page_id else None,
     }
+
+
+@broker.task(task_name="enrich_page")
+async def enrich_page_task(
+    page_id: str, context: Annotated[Context, TaskiqDepends()]
+) -> dict[str, Any] | None:
+    state = context.state
+    result = await enrich_with_retries(
+        state.session_factory, state.enrich, uuid.UUID(page_id)
+    )
+    if result is None:
+        logger.info("skipped %s: not pending anymore", page_id)
+        return None
+    logger.info(
+        "%s: %s (%s) via %s", result.status, page_id, result.reason, result.provider
+    )
+    return {**asdict(result), "page_id": page_id}

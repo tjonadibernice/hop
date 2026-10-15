@@ -1,0 +1,3 @@
+# Domains the crawler never stores, one per line. Subdomains are blocked too:
+# listing example.com also blocks www.example.com and blog.example.com.
+# Add domains here as you find spam or unwanted sites.

@@ -28,5 +28,21 @@ class Settings(BaseSettings):
     # testing: never turn this on where the crawler can reach real services.
     crawl_allow_private_hosts: bool = False
 
+    # Enrichment: LLM providers, tried in this order. Leave a key empty to skip
+    # that provider. Ollama runs locally and needs no key.
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.1-flash-lite"
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-5.6-luna"
+    ollama_base_url: str | None = None  # e.g. http://localhost:11434/v1
+    ollama_model: str = "llama3.2"
+
+    # Embeddings (optional: without a key, pages are stored without one)
+    voyage_api_key: str | None = None
+    voyage_model: str = "voyage-4-lite"
+
+    # Safety check (optional: without a key, pages can't be auto-approved)
+    safe_browsing_api_key: str | None = None
+
 
 settings = Settings()

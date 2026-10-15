@@ -1,6 +1,6 @@
 # Hop Backend
 
-FastAPI service for Hop. It serves the API, connects to Postgres (with pgvector) and Redis, handles sign-up with email verification and login with server-side sessions, stores users' interests, serves pages through the Hop endpoint, and records likes and dislikes. A background worker runs the ingestion pipeline, which fetches, cleans, and deduplicates new pages.
+FastAPI service for Hop. It serves the API, connects to Postgres (with pgvector) and Redis, handles sign-up with email verification and login with server-side sessions, stores users' interests, serves pages through the Hop endpoint, and records likes and dislikes. A background worker runs the ingestion pipeline, which fetches, cleans, and deduplicates new pages, then enriches them with an LLM and embeddings and decides which ones Hop shows.
 
 ## Requirements
 
@@ -20,6 +20,7 @@ make seed                 # load the starter pages
 make check-embeds         # check which pages can be shown in an iframe
 make worker               # (optional) start the ingestion worker
 make ingest               # (optional) queue the URLs in scripts/sources.txt
+make enrich               # (optional) queue pending pages for enrichment
 make test-db              # create the test database (once)
 ```
 
@@ -48,6 +49,13 @@ Settings are read from the root `.env`. Environment variables take priority.
 | `CRAWLER_USER_AGENT` | No | `HopBot/0.1 (+https://github.com/tjonadibernice/hop)` | How the crawler identifies itself to websites |
 | `CRAWL_DELAY_SECONDS` | No | `1.0` | Minimum time between two requests to the same website |
 | `CRAWL_ALLOW_PRIVATE_HOSTS` | No | `false` | Lets the crawler fetch localhost and private addresses. Only for local testing |
+| `GEMINI_API_KEY` | For enrichment | | First LLM provider (model `GEMINI_MODEL`, default `gemini-3.1-flash-lite`) |
+| `OPENAI_API_KEY` | No | | Second LLM provider (model `OPENAI_MODEL`, default `gpt-5.6-luna`) |
+| `OLLAMA_BASE_URL` | No | | Third LLM provider, a local model, e.g. `http://localhost:11434/v1` (model `OLLAMA_MODEL`, default `llama3.2`) |
+| `VOYAGE_API_KEY` | No | | Embeddings (model `VOYAGE_MODEL`, default `voyage-4-lite`); without it, pages have no embedding |
+| `SAFE_BROWSING_API_KEY` | No | | Google Safe Browsing; without it, pages can't be auto-approved |
+
+At least one of `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `OLLAMA_BASE_URL` is needed for enrichment.
 
 ## Run the API
 
@@ -166,7 +174,7 @@ For each URL, the worker (`app/ingestion/pipeline.py`):
     - **Limits**: 5 redirects, 2 MB per page, HTML only.
 3. **Extracts the article** (`extract.py`) with trafilatura: main text and title, without menus and footers. Pages under 200 words are skipped.
 4. **Checks for duplicates**: the page's own `<link rel="canonical">` (trusted only on the same site), then **SimHash** (`simhash.py`) for near-duplicates such as the same article on another URL.
-5. **Stores it as `pending`**, with the text, word count, fingerprint, and whether it can be shown in an iframe. Hop only shows `approved` pages; the next phase adds the steps that approve or reject them.
+5. **Stores it as `pending`**, with the text, word count, fingerprint, and whether it can be shown in an iframe, then queues it for enrichment (below). Hop only shows `approved` pages.
 
 | Outcome | Meaning |
 | --- | --- |
@@ -180,7 +188,7 @@ For each URL, the worker (`app/ingestion/pipeline.py`):
 
 Timeouts, network errors, `429`, and `5xx` responses are retried twice, after 10 and 60 seconds. Jobs go through a Redis Stream, so a job is only removed once a worker finishes it; results are kept in Redis for 7 days.
 
-**Page statuses:** `pending` (fetched, waiting for review), `approved` (shown by Hop), `rejected`, `needs_review` (for the curator agent or a person), and `dead` (stopped working).
+**Page statuses:** `pending` (fetched, not enriched yet), `approved` (shown by Hop), `rejected`, `needs_review` (for the curator agent or a person), and `dead` (stopped working). `pages.status_reason` records why.
 
 ### How near-duplicate detection works
 
@@ -189,6 +197,43 @@ SimHash gives each text a 64-bit fingerprint where similar texts get similar fin
 To avoid comparing against every stored page, each fingerprint is split into 8 bands of 8 bits, stored in `pages.simhash_bands` with a GIN index. Two fingerprints within 7 bits of each other must share at least one identical band (pigeonhole principle), so Postgres only returns pages that share a band (`&&`), and only those are compared bit by bit.
 
 Known limits: two near-duplicates processed at the same moment by different workers can both be stored, and the SSRF check doesn't yet protect against DNS rebinding (see `network.py`).
+
+### Enrichment
+
+After a page is stored, the worker's `enrich_page` task (`app/ingestion/enrich.py`) decides whether Hop shows it:
+
+1. **Safety screen** (`safety.py`): the domain blocklist in `app/ingestion/blocked_domains.txt` (subdomains included), then [Google Safe Browsing](https://developers.google.com/safe-browsing/reference/rest/v5/urls/search) (`v5/urls:search`). A blocked or flagged page is rejected right away, without an LLM call.
+2. **One LLM call** returns JSON matching a schema: a 2-sentence summary, up to 3 topics from Hop's 15 (each with a confidence), a quality score from 0 to 1, spam and adult flags, and a one-line reason. The page text is fenced in `<page_content>` tags, and the instructions say to ignore anything written inside it (prompt injection). Every answer is validated with Pydantic.
+3. **Embedding** (`app/ai/embeddings.py`): Voyage `voyage-4-lite`, 1,024 numbers per page, stored in `pages.embedding` (pgvector, HNSW index) for the recommender.
+4. **Routing rules** (plain code, in order):
+
+| Check | Result |
+| --- | --- |
+| Blocklisted or flagged by Safe Browsing | `rejected` |
+| Adult content or spam | `rejected` |
+| Quality below 0.3 | `rejected` |
+| No topic with confidence 0.6 or more | `needs_review` |
+| Safe Browsing not configured | `needs_review` |
+| Quality below 0.6 | `needs_review` |
+| Everything else | `approved` |
+
+Topics with confidence 0.6 or more (up to 3) are saved in `page_topics` with their confidence. Rejected pages aren't embedded.
+
+**LLM failover** (`app/ai/llm.py`): Gemini, OpenAI, and Ollama all speak the OpenAI chat completions protocol, so one small client handles all three. Providers are tried in that order. A provider that answers `429` goes on a Redis cooldown (its `Retry-After`, or 60 seconds) and is skipped until then; any other failure, including an answer that doesn't match the schema, moves on to the next. Embeddings have no fallback on purpose: vectors from different models can't be compared.
+
+If a service is down, the task retries after 30 seconds and 5 minutes. After that the page stays `pending`; `make enrich` queues every pending page that hasn't been enriched.
+
+### Enrichment API keys
+
+Put keys in the root `.env` (never commit it), then restart the worker. All have free options:
+
+| Key | Where to get it | Notes |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/) → Get API key | Free tier with rate limits; failover handles `429`s |
+| `VOYAGE_API_KEY` | [Voyage AI dashboard](https://dashboard.voyageai.com/) → API keys | Free token allowance, then paid per token |
+| `SAFE_BROWSING_API_KEY` | [Google Cloud console](https://console.cloud.google.com/): enable the Safe Browsing API, then create an API key restricted to it | Non-commercial use only; commercial use needs the Web Risk API |
+| `OPENAI_API_KEY` (optional) | [OpenAI platform](https://platform.openai.com/) | Paid |
+| `OLLAMA_BASE_URL` (optional) | Install [Ollama](https://ollama.com/), run `ollama pull llama3.2` | Free, runs on your machine |
 
 ## Database migrations
 
@@ -210,7 +255,7 @@ uv run ruff check --fix .
 uv run ruff format .
 ```
 
-The iframe checker and crawler tests use a fake internet (`tests/web.py`, built on `httpx.MockTransport`), so they never touch the network. Tests run against a real Postgres database (`TEST_DATABASE_URL`), so Postgres must be running. All migrations are applied to the test database at the start of each run, and users and pages are emptied after each test. Redis and email are replaced with in-memory fakes, so tests never send real email.
+The iframe checker, crawler, and enrichment tests use fake servers (`tests/web.py` and `httpx.MockTransport`), so they never touch the network or need API keys. Tests run against a real Postgres database (`TEST_DATABASE_URL`), so Postgres must be running. All migrations are applied to the test database at the start of each run, and users and pages are emptied after each test. Redis and email are replaced with in-memory fakes, so tests never send real email.
 
 ## Project structure
 
@@ -224,8 +269,14 @@ app/
 ├── worker.py            # Background worker (taskiq) for the ingestion pipeline
 ├── email.py             # Email sending (SMTP)
 ├── security.py          # Password hashing (Argon2) and token helpers
+├── ai/                  # AI service clients
+│   ├── llm.py           # JSON from chat models, with failover
+│   └── embeddings.py    # Voyage embeddings
 ├── ingestion/           # Ingestion pipeline
 │   ├── pipeline.py      # The steps for one URL, and retries
+│   ├── enrich.py        # LLM analysis, embedding, and routing rules
+│   ├── safety.py        # Blocklist and Safe Browsing
+│   ├── blocked_domains.txt  # Domains never stored
 │   ├── urls.py          # URL normalization
 │   ├── network.py       # SSRF protection
 │   ├── fetch.py         # Safe fetching: redirects, robots.txt, size limits
@@ -262,6 +313,7 @@ migrations/
 └── versions/            # Migration files, applied in order
 scripts/
 ├── check_embeddable.py  # Checks unchecked pages for iframe support
+├── enqueue_enrichment.py  # Queues pending pages for enrichment
 ├── enqueue_urls.py      # Queues a URL list for the worker
 ├── sources.txt          # Sample URLs for make ingest
 ├── seed_pages.json      # Starter pages
@@ -270,6 +322,10 @@ tests/
 ├── conftest.py          # Test database, fakes, test clients
 ├── test_auth.py         # Sign-up and email verification
 ├── test_embeds.py       # Iframe header rules
+├── test_embeddings.py   # Voyage client
+├── test_enrich.py       # Routing rules and enrichment
+├── test_llm.py          # Provider failover and cooldowns
+├── test_safety.py       # Blocklist and Safe Browsing
 ├── test_fetch.py        # Redirects, robots.txt, limits, politeness
 ├── test_network.py      # SSRF address checks
 ├── test_pipeline.py     # Ingestion outcomes and retries

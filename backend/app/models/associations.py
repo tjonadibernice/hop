@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Table
+from sqlalchemy import Column, Float, ForeignKey, Table
 
 from app.models.base import Base
 
@@ -8,6 +8,8 @@ page_topics = Table(
     Base.metadata,
     Column("page_id", ForeignKey("pages.id", ondelete="CASCADE"), primary_key=True),
     Column("topic_id", ForeignKey("topics.id", ondelete="CASCADE"), primary_key=True),
+    # How sure the enrichment model was (0-1); NULL for hand-picked pages
+    Column("confidence", Float),
 )
 
 # Which topics each user picked as interests
