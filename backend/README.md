@@ -202,7 +202,7 @@ Known limits: two near-duplicates processed at the same moment by different work
 
 After a page is stored, the worker's `enrich_page` task (`app/ingestion/enrich.py`) decides whether Hop shows it:
 
-1. **Safety screen** (`safety.py`): the domain blocklist in `app/ingestion/blocked_domains.txt` (subdomains included), then [Google Safe Browsing](https://developers.google.com/safe-browsing/reference/rest/v5/urls/search) (`v5/urls:search`). A blocked or flagged page is rejected right away, without an LLM call.
+1. **Safety screen** (`safety.py`): the domain blocklist in `app/ingestion/blocked_domains.txt` (subdomains included), then [Google Safe Browsing](https://developers.google.com/safe-browsing/reference/rest) (the v4 Lookup API, `threatMatches:find`, which answers in JSON; v5's `urls:search` only answers in protobuf). A blocked or flagged page is rejected right away, without an LLM call.
 2. **One LLM call** returns JSON matching a schema: a 2-sentence summary, up to 3 topics from Hop's 15 (each with a confidence), a quality score from 0 to 1, spam and adult flags, and a one-line reason. The page text is fenced in `<page_content>` tags, and the instructions say to ignore anything written inside it (prompt injection). Every answer is validated with Pydantic.
 3. **Embedding** (`app/ai/embeddings.py`): Voyage `voyage-4-lite`, 1,024 numbers per page, stored in `pages.embedding` (pgvector, HNSW index) for the recommender.
 4. **Routing rules** (plain code, in order):

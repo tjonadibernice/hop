@@ -6,7 +6,14 @@ from urllib.parse import urlsplit
 
 import httpx
 
-SAFE_BROWSING_URL = "https://safebrowsing.googleapis.com/v5/urls:search"
+# The v4 Lookup API speaks JSON. (v5's urls:search only answers in protobuf.)
+SAFE_BROWSING_URL = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
+THREAT_TYPES = [
+    "MALWARE",
+    "SOCIAL_ENGINEERING",
+    "UNWANTED_SOFTWARE",
+    "POTENTIALLY_HARMFUL_APPLICATION",
+]
 BLOCKLIST_FILE = Path(__file__).with_name("blocked_domains.txt")
 
 
@@ -51,12 +58,20 @@ class SafetyChecker:
         if not self.api_key:
             return SafetyResult(safe=True, checked=False)
 
+        body = {
+            "client": {"clientId": "hop", "clientVersion": "0.1"},
+            "threatInfo": {
+                "threatTypes": THREAT_TYPES,
+                "platformTypes": ["ANY_PLATFORM"],
+                "threatEntryTypes": ["URL"],
+                "threatEntries": [{"url": url}],
+            },
+        }
         try:
             # The key goes in a header, not the URL: URLs end up in logs
-            response = await self.client.get(
+            response = await self.client.post(
                 SAFE_BROWSING_URL,
-                # v5 answers in protobuf by default; alt=json asks for JSON
-                params={"urls": url, "alt": "json"},
+                json=body,
                 headers={"X-Goog-Api-Key": self.api_key},
             )
         except httpx.HTTPError as error:
@@ -64,13 +79,12 @@ class SafetyChecker:
         if response.status_code >= 400:
             raise SafetyCheckError(f"HTTP {response.status_code}")
         try:
-            threats = response.json().get("threats", [])
+            # No matches comes back as an empty object: {}
+            matches = response.json().get("matches", [])
         except (ValueError, AttributeError) as error:
             raise SafetyCheckError("unreadable answer") from error
 
-        threat_types = sorted(
-            {kind for threat in threats for kind in threat.get("threatTypes", [])}
-        )
+        threat_types = sorted({match.get("threatType", "UNKNOWN") for match in matches})
         if threat_types:
             return SafetyResult(
                 safe=False,

@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -49,15 +51,19 @@ async def test_clean_url_is_safe():
 
     def handler(request):
         requests.append(request)
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={})  # no matches
 
     result = await checker(handler).check("https://blog.test/post")
 
     assert (result.safe, result.checked) == (True, True)
-    assert requests[0].url.params["urls"] == "https://blog.test/post"
-    assert requests[0].url.params["alt"] == "json"
-    assert requests[0].headers["x-goog-api-key"] == "sb-key"
-    assert "sb-key" not in str(requests[0].url)  # never in the URL (logs)
+    request = requests[0]
+    assert request.method == "POST"
+    assert request.url.path == "/v4/threatMatches:find"
+    body = json.loads(request.content)
+    assert body["threatInfo"]["threatEntries"] == [{"url": "https://blog.test/post"}]
+    assert "MALWARE" in body["threatInfo"]["threatTypes"]
+    assert request.headers["x-goog-api-key"] == "sb-key"
+    assert "sb-key" not in str(request.url)  # never in the URL (logs)
 
 
 async def test_threats_make_a_url_unsafe():
@@ -65,11 +71,12 @@ async def test_threats_make_a_url_unsafe():
         return httpx.Response(
             200,
             json={
-                "threats": [
+                "matches": [
                     {
-                        "url": "https://evil.test/",
-                        "threatTypes": ["SOCIAL_ENGINEERING", "MALWARE"],
-                    }
+                        "threatType": "SOCIAL_ENGINEERING",
+                        "threat": {"url": "https://evil.test/"},
+                    },
+                    {"threatType": "MALWARE", "threat": {"url": "https://evil.test/"}},
                 ]
             },
         )
