@@ -55,20 +55,21 @@ class SafetyChecker:
             # The key goes in a header, not the URL: URLs end up in logs
             response = await self.client.get(
                 SAFE_BROWSING_URL,
-                params={"urls": url},
+                # v5 answers in protobuf by default; alt=json asks for JSON
+                params={"urls": url, "alt": "json"},
                 headers={"X-Goog-Api-Key": self.api_key},
             )
         except httpx.HTTPError as error:
             raise SafetyCheckError(type(error).__name__) from error
         if response.status_code >= 400:
             raise SafetyCheckError(f"HTTP {response.status_code}")
+        try:
+            threats = response.json().get("threats", [])
+        except (ValueError, AttributeError) as error:
+            raise SafetyCheckError("unreadable answer") from error
 
         threat_types = sorted(
-            {
-                kind
-                for threat in response.json().get("threats", [])
-                for kind in threat.get("threatTypes", [])
-            }
+            {kind for threat in threats for kind in threat.get("threatTypes", [])}
         )
         if threat_types:
             return SafetyResult(

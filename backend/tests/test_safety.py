@@ -55,6 +55,7 @@ async def test_clean_url_is_safe():
 
     assert (result.safe, result.checked) == (True, True)
     assert requests[0].url.params["urls"] == "https://blog.test/post"
+    assert requests[0].url.params["alt"] == "json"
     assert requests[0].headers["x-goog-api-key"] == "sb-key"
     assert "sb-key" not in str(requests[0].url)  # never in the URL (logs)
 
@@ -88,3 +89,11 @@ async def test_without_a_key_the_url_is_unchecked():
 async def test_api_errors_are_retryable():
     with pytest.raises(SafetyCheckError):
         await checker(lambda request: httpx.Response(503)).check("https://blog.test/")
+
+
+async def test_non_json_answer_is_retryable_not_a_crash():
+    def protobuf(request):
+        return httpx.Response(200, content=b"\x0a\x05binary")
+
+    with pytest.raises(SafetyCheckError, match="unreadable"):
+        await checker(protobuf).check("https://blog.test/")
