@@ -35,6 +35,9 @@ class Interaction(Base):
         ForeignKey("pages.id", ondelete="CASCADE")
     )
     kind: Mapped[str] = mapped_column(String(16))
+    # For views: which strategy picked the page ("random" or "recommender"),
+    # so the A/B report can compare them
+    strategy: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

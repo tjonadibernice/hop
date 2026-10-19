@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     voyage_api_key: str | None = None
     voyage_model: str = "voyage-4-lite"
 
+    # A/B test: the share of users (0-100) who get the recommender instead of
+    # random picks. 0 turns the recommender off; 100 gives it to everyone.
+    recommender_percent: int = 50
+
     # Safety check (optional: without a key, pages can't be auto-approved)
     safe_browsing_api_key: str | None = None
 

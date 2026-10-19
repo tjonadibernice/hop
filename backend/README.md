@@ -47,6 +47,7 @@ Settings are read from the root `.env`. Environment variables take priority.
 | `SESSION_COOKIE_NAME` | No | `hop_session` | Name of the session cookie |
 | `SESSION_TTL_SECONDS` | No | `604800` (7 days) | How long a login lasts |
 | `COOKIE_SECURE` | No | `false` | Send the session cookie over HTTPS only; set to `true` in production |
+| `RECOMMENDER_PERCENT` | No | `50` | Share of users (0–100) who get the recommender instead of random picks; the A/B split |
 | `CRAWLER_USER_AGENT` | No | `HopBot/0.1 (+https://github.com/tjonadibernice/hop)` | How the crawler identifies itself to websites |
 | `CRAWL_DELAY_SECONDS` | No | `1.0` | Minimum time between two requests to the same website |
 | `CRAWL_ALLOW_PRIVATE_HOSTS` | No | `false` | Lets the crawler fetch localhost and private addresses. Only for local testing |
@@ -125,10 +126,33 @@ Not yet implemented: rate limiting for login attempts.
 
 ## Hopping
 
-Users choose 3–15 topics as interests. Each `POST /hop` picks a random **approved** page that belongs to at least one of those topics and that the user hasn't seen, then records a `view` in the `interactions` table.
+Users choose 3–15 topics as interests. Each `POST /hop` picks an **approved** page from those topics that the user hasn't seen, then records a `view` in the `interactions` table, along with the strategy that picked it.
 
 - `POST` is used instead of `GET` because each hop changes data (it records a view), and `GET` requests must not change anything.
-- Pages are picked with `ORDER BY random()`, a simple baseline that works well for thousands of pages. The recommender will replace it.
+- Two strategies run side by side as an A/B test (`app/services/experiments.py`): **random** (`ORDER BY random()`, the baseline) and the **recommender** (below).
+
+### Recommendations
+
+`app/services/recommender.py` makes two decisions per hop:
+
+1. **Which topic? Thompson sampling.** For each of the user's interests, Hop keeps a Beta(likes + 1, dislikes + 1) distribution, draws one random number from each, and tries topics from the highest draw down. A loved topic usually wins, but a topic with little data has a wide distribution, so it sometimes draws high and gets a turn. That's built-in exploration: Hop keeps learning and stays surprising.
+2. **Which page in that topic? Nearest to the user's taste.** The taste vector is a weighted average of the embeddings of pages the user reacted to: likes add, dislikes subtract half as much, and reactions fade with a 30-day half-life. pgvector returns the 10 approved, unseen pages closest to it (cosine distance, HNSW index), and one is chosen with weights 1, 1/2, 1/3, …, so closer pages are likelier but not certain.
+
+**Cold start:** until a user has 10 reactions, there's no reliable taste, so pages in the chosen topic are ranked by their enrichment quality score instead. Pages without an embedding are still reachable: if the nearest-neighbor search finds nothing in a topic, Hop falls back to quality ranking.
+
+**A/B test:** a hash of each user's ID puts them in bucket 0–99; buckets below `RECOMMENDER_PERCENT` get the recommender. The same user always gets the same strategy. `make ab-report` shows each group's users, views, likes, dislikes, and **liked rate** (views whose page the user currently likes), plus a two-proportion z-test that says whether the difference is real or could be chance:
+
+```
+Strategy      Users   Views  Likes  Dislikes  Liked rate
+random           25    1000    156       844      15.6%
+recommender      25    1000    636       364      63.6%
+
+Difference: +48.0% (z = 21.95, p = 0.000): a real difference (p < 0.05)
+```
+
+(That example comes from a simulation with synthetic users who like pages close to a hidden taste, used to check the algorithm end to end. Real users will show smaller differences.)
+
+**Embeddings for older pages:** pages approved by enrichment are embedded automatically. The hand-picked seed pages aren't, so run `make embed` once (it needs `VOYAGE_API_KEY`); it embeds every approved page that has no embedding yet, 64 at a time.
 
 ### Likes and dislikes
 
@@ -335,6 +359,7 @@ app/
 │   ├── feeds.txt        # Feeds to check daily
 │   ├── discovery.py     # Queuing links from approved pages
 │   ├── linkrot.py       # Re-checks approved pages, retires broken ones
+│   ├── backfill.py      # Embeds pages that have no embedding
 │   ├── enrich.py        # LLM analysis, embedding, and routing rules
 │   ├── safety.py        # Blocklist and Safe Browsing
 │   ├── blocked_domains.txt  # Domains never stored
@@ -359,7 +384,9 @@ app/
 ├── services/            # Business logic
 │   ├── auth.py          # Sign-up, email verification, and login
 │   ├── embeds.py        # Whether a page allows being shown in an iframe
-│   ├── hop.py           # Picking the next page
+│   ├── hop.py           # Picking the next page (A/B: random or recommender)
+│   ├── recommender.py   # Thompson sampling and taste vectors
+│   ├── experiments.py   # A/B assignment and the liked-rate report
 │   ├── reactions.py     # Likes, dislikes, and the likes list
 │   ├── sessions.py      # Session tokens in Redis
 │   └── topics.py        # Topics and interests
@@ -374,7 +401,9 @@ migrations/
 └── versions/            # Migration files, applied in order
 scripts/
 ├── check_embeddable.py  # Checks unchecked pages for iframe support
+├── ab_report.py         # Compares the A/B groups
 ├── check_links.py       # Runs the link check now
+├── embed_pages.py       # Embeds approved pages without an embedding
 ├── poll_feeds.py        # Checks the feeds now
 ├── enqueue_enrichment.py  # Queues pending pages for enrichment
 ├── enqueue_urls.py      # Queues a URL list for the worker
@@ -385,6 +414,8 @@ tests/
 ├── conftest.py          # Test database, fakes, test clients
 ├── test_auth.py         # Sign-up and email verification
 ├── test_embeds.py       # Iframe header rules
+├── test_experiments.py  # A/B assignment, stats, z-test
+├── factories.py         # Helpers that create users, pages, reactions
 ├── test_embeddings.py   # Voyage client
 ├── test_enrich.py       # Routing rules and enrichment
 ├── test_discovery.py    # Article links, filters, caps, depth
@@ -402,6 +433,7 @@ tests/
 ├── test_hop.py
 ├── test_interests.py
 ├── test_reactions.py    # Likes, dislikes, and the likes list
+├── test_recommender.py  # Thompson sampling, taste, candidates, backfill
 ├── test_security.py
 ├── test_sessions.py     # Login, logout, and the current user
 └── test_topics.py

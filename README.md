@@ -2,7 +2,7 @@
 
 Hop is a discovery app: one click on the Hop button shows a page the user is likely to enjoy but would never have found.
 
-**Status:** in progress. Phases 1 (skeleton) and 2 (Hop MVP) are complete: users can sign up, pick interests, hop, and like pages. Phase 3 (ingestion pipeline) is complete: a background worker fetches, cleans, and deduplicates new pages, uses an LLM, embeddings, and a safety screen to approve, reject, or flag them for review, re-checks approved pages every 30 days to retire broken ones, and finds new pages by itself from RSS/Atom feeds and from the links inside approved pages. Next: Phase 4, personalized recommendations.
+**Status:** in progress. Phases 1 (skeleton) and 2 (Hop MVP) are complete: users can sign up, pick interests, hop, and like pages. Phase 3 (ingestion pipeline) is complete: a background worker fetches, cleans, and deduplicates new pages, uses an LLM, embeddings, and a safety screen to approve, reject, or flag them for review, re-checks approved pages every 30 days to retire broken ones, and finds new pages by itself from RSS/Atom feeds and from the links inside approved pages. Phase 4 (recommendations) is in progress: a recommender (taste embeddings and Thompson sampling) now runs as an A/B test against random picks.
 
 [![CI](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml/badge.svg)](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml)
 
@@ -101,6 +101,8 @@ The worker's log shows what happened to each URL. Each new page is then enriched
 | `make enrich` | Queue pending pages that haven't been enriched yet (after adding keys, or after an outage) |
 | `make check-links` | Run the link check now instead of waiting for the daily schedule |
 | `make poll-feeds` | Check the feeds in `backend/app/ingestion/feeds.txt` now |
+| `make embed` | Add embeddings to approved pages that don't have one (needs `VOYAGE_API_KEY`) |
+| `make ab-report` | Compare liked rates: recommender vs. random picks |
 | `make test-db` | Create the test database (once) |
 | `make api` | Start the backend with reload |
 | `make web` | Start the frontend development server |

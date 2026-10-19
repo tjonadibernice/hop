@@ -7,13 +7,14 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
 from app.dependencies import get_email_sender, get_redis, get_session
 from app.email import Email
 from app.main import app
+from app.models import Topic
 
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
@@ -99,3 +100,10 @@ async def logged_in_client(
     response = await client.post("/auth/login", json=credentials)
     assert response.status_code == 200
     return client
+
+
+@pytest.fixture
+async def topics(session_factory) -> list[Topic]:
+    """Three of the seeded topics."""
+    async with session_factory() as session:
+        return list(await session.scalars(select(Topic).order_by(Topic.id).limit(3)))
