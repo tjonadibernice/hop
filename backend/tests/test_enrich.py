@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -17,6 +18,7 @@ from app.ingestion.enrich import (
     enrich_page,
     enrich_with_retries,
     page_prompt,
+    pending_page_ids,
     route,
 )
 from app.ingestion.safety import SafetyChecker, SafetyResult
@@ -324,3 +326,78 @@ async def test_retries_until_the_llm_recovers(session_factory, redis, fake):
 
     assert result.status == "approved"
     assert fake.calls.count("llm.test") == 3
+
+
+# --- Waiting for rate limits, and the hourly sweep -----------------------------
+
+
+@pytest.fixture
+def recorded_sleeps(monkeypatch) -> list[float]:
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("app.ingestion.enrich.asyncio.sleep", fake_sleep)
+    return sleeps
+
+
+async def test_waits_for_the_cooldown_before_retrying(
+    session_factory, redis, fake, monkeypatch
+):
+    answers = iter([httpx.Response(429, headers={"retry-after": "120"})])
+    good = fake.llm_json(analysis().model_dump())
+    original = fake.handler
+
+    def limited_once(request):
+        if request.url.host == "llm.test":
+            return next(answers, good)
+        return original(request)
+
+    fake.handler = limited_once
+    sleeps: list[float] = []
+
+    async def sleep_and_expire(seconds):
+        # Time "passes": the cooldown the router stored in Redis runs out
+        sleeps.append(seconds)
+        await redis.delete("llm:cooldown:fake")
+
+    monkeypatch.setattr("app.ingestion.enrich.asyncio.sleep", sleep_and_expire)
+    page = await add_pending_page(session_factory)
+
+    result = await enrich_with_retries(
+        session_factory, fake.services(redis), page.id, delays=(30, 300)
+    )
+
+    assert result.status == "approved"
+    assert sleeps == [121]  # the cooldown (+1 s), not the default 30 s
+
+
+async def test_long_waits_leave_the_page_pending(
+    session_factory, redis, fake, recorded_sleeps
+):
+    await redis.set("llm:cooldown:fake", "1", ex=6 * 60 * 60)
+    page = await add_pending_page(session_factory)
+
+    result = await enrich_with_retries(
+        session_factory, fake.services(redis), page.id, delays=(30, 300)
+    )
+
+    assert result.status == "pending"
+    assert recorded_sleeps == []  # didn't hold the job open for hours
+    assert (await load(session_factory, page.id)).status == "pending"
+
+
+async def test_sweep_finds_pending_pages_that_were_never_enriched(
+    session_factory, redis, fake
+):
+    old = await add_pending_page(session_factory, "https://blog.test/old")
+    done = await add_pending_page(session_factory, "https://blog.test/done")
+    async with session_factory() as session:
+        await enrich_page(session, fake.services(redis), done.id)
+    later = datetime.now(UTC) + timedelta(minutes=1)
+
+    async with session_factory() as session:
+        assert await pending_page_ids(session, older_than=later) == [old.id]
+        # Pages stored after the cutoff are left to their own queued job
+        assert await pending_page_ids(session, older_than=old.created_at) == []

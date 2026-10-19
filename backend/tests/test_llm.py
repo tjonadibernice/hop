@@ -1,4 +1,7 @@
 import json
+import time
+from dataclasses import replace
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -140,3 +143,75 @@ def test_providers_follow_the_failover_order():
         ollama_base_url="http://localhost:11434/v1",
     )
     assert [p.name for p in providers_from_settings(settings)] == ["gemini", "ollama"]
+
+
+# --- Pacing, daily caps, and when to retry -------------------------------------
+
+
+NOON = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+
+
+def ok(word="ok") -> httpx.Response:
+    return chat_response(f'{{"word": "{word}"}}')
+
+
+async def test_requests_per_minute_spaces_calls(redis):
+    fake = FakeProviders({"gemini.test": ok()})
+    paced = replace(GEMINI, requests_per_minute=600)  # one call every 0.1 s
+    llm = router(fake, redis, [paced])
+
+    start = time.monotonic()
+    for _ in range(3):
+        await ask(llm)
+
+    assert time.monotonic() - start >= 0.2
+
+
+async def test_daily_cap_fails_over_once_reached(redis):
+    fake = FakeProviders({"gemini.test": ok("g"), "ollama.test": ok("o")})
+    capped = replace(GEMINI, max_calls_per_day=2)
+    llm = router(fake, redis, [capped, OLLAMA])
+    llm.now = lambda: NOON
+
+    providers = [(await ask(llm))[1] for _ in range(3)]
+
+    assert providers == ["gemini", "gemini", "ollama"]
+    assert await redis.get("llm:calls:gemini:2026-10-19") == "2"
+    assert await redis.ttl("llm:calls:gemini:2026-10-19") > 0
+
+
+async def test_daily_cap_says_to_wait_until_midnight(redis):
+    capped = replace(GEMINI, max_calls_per_day=1)
+    llm = router(FakeProviders({"gemini.test": ok()}), redis, [capped])
+    llm.now = lambda: NOON
+    await ask(llm)
+
+    with pytest.raises(AllProvidersFailedError, match="daily limit") as caught:
+        await ask(llm)
+    assert caught.value.retry_after == 12 * 60 * 60  # noon -> midnight UTC
+
+
+async def test_retry_after_is_the_shortest_cooldown(redis):
+    await redis.set("llm:cooldown:gemini", "1", ex=300)
+    await redis.set("llm:cooldown:openai", "1", ex=40)
+
+    with pytest.raises(AllProvidersFailedError) as caught:
+        await ask(router(FakeProviders({}), redis, [GEMINI, OPENAI]))
+    assert 30 < caught.value.retry_after <= 40
+
+
+async def test_no_retry_hint_when_a_provider_really_failed(redis):
+    await redis.set("llm:cooldown:gemini", "1", ex=60)
+    fake = FakeProviders({"openai.test": httpx.Response(500)})
+
+    with pytest.raises(AllProvidersFailedError) as caught:
+        await ask(router(fake, redis, [GEMINI, OPENAI]))
+    assert caught.value.retry_after is None
+
+
+def test_empty_settings_mean_not_set(monkeypatch):
+    monkeypatch.setenv("GEMINI_REQUESTS_PER_MINUTE", "")
+    monkeypatch.setenv("GEMINI_MAX_CALLS_PER_DAY", "")
+    settings = Settings(database_url="postgresql+asyncpg://x", redis_url="redis://x")
+    assert settings.gemini_requests_per_minute is None
+    assert settings.gemini_max_calls_per_day == 1000  # the default stays

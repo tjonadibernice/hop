@@ -6,6 +6,8 @@ Tasks:
   needs review.
 - check_links (daily, 03:00 UTC): queue recheck_page for every approved page
   that's due, which retires pages that broke (see ingestion/linkrot.py).
+- enrich_pending (hourly, at :15): re-queue pending pages whose enrichment
+  gave up earlier (for example, every LLM provider was rate limited).
 - poll_feeds (daily, 02:00 UTC): queue poll_feed for every feed in
   ingestion/feeds.txt, which queues new posts for ingestion.
 - After a page is approved (or passes a link check for the first time), its
@@ -19,7 +21,7 @@ Queue URLs with:         uv run python -m scripts.enqueue_urls scripts/sources.t
 import logging
 import uuid
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 import httpx
@@ -33,7 +35,7 @@ from app.cache import create_redis
 from app.config import settings
 from app.db import create_db_engine, create_session_factory
 from app.ingestion.discovery import links_to_queue
-from app.ingestion.enrich import EnrichServices, enrich_with_retries
+from app.ingestion.enrich import EnrichServices, enrich_with_retries, pending_page_ids
 from app.ingestion.feeds import FeedError, load_feeds, new_post_urls
 from app.ingestion.fetch import FetchError, RobotsDisallowedError, SafeFetcher
 from app.ingestion.linkrot import due_page_ids, recheck_page
@@ -49,6 +51,9 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 RESULT_TTL_SECONDS = 7 * 24 * 60 * 60
+ENRICH_LOCK_SECONDS = 30 * 60
+SWEEP_SKIPS_NEWER_THAN = timedelta(minutes=10)
+SWEEP_BATCH_SIZE = 100
 
 # Redis Streams keep a message until a worker acknowledges it, so a job isn't
 # lost if a worker crashes halfway through
@@ -152,9 +157,18 @@ async def enrich_page_task(
     page_id: str, context: Annotated[Context, TaskiqDepends()]
 ) -> dict[str, Any] | None:
     state = context.state
-    result = await enrich_with_retries(
-        state.session_factory, state.enrich, uuid.UUID(page_id)
-    )
+    # The hourly sweep can queue a page that's already queued; the lock makes
+    # sure only one job enriches it (and pays for the LLM call)
+    lock = f"enrich:lock:{page_id}"
+    if not await state.redis.set(lock, "1", nx=True, ex=ENRICH_LOCK_SECONDS):
+        logger.info("skipped %s: already being enriched", page_id)
+        return None
+    try:
+        result = await enrich_with_retries(
+            state.session_factory, state.enrich, uuid.UUID(page_id)
+        )
+    finally:
+        await state.redis.delete(lock)
     if result is None:
         logger.info("skipped %s: not pending anymore", page_id)
         return None
@@ -195,6 +209,22 @@ async def recheck_page_task(
     else:
         logger.info("link check %s: %s (%s)", result.outcome, page_id, result.reason)
     return {**asdict(result), "page_id": page_id}
+
+
+@broker.task(
+    task_name="enrich_pending",
+    schedule=[{"cron": "15 * * * *", "schedule_id": "hourly-enrich-sweep"}],
+)
+async def enrich_pending_task(context: Annotated[Context, TaskiqDepends()]) -> dict:
+    """Re-queue pending pages whose enrichment gave up earlier."""
+    older_than = datetime.now(UTC) - SWEEP_SKIPS_NEWER_THAN
+    async with context.state.session_factory() as session:
+        page_ids = await pending_page_ids(session, older_than, SWEEP_BATCH_SIZE)
+    for page_id in page_ids:
+        await enrich_page_task.kiq(str(page_id))
+    if page_ids:
+        logger.info("enrich sweep: queued %d pending pages", len(page_ids))
+    return {"queued": len(page_ids)}
 
 
 @broker.task(

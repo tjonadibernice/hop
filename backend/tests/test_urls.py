@@ -17,6 +17,11 @@ from app.ingestion.urls import InvalidUrlError, canonicalize_url
             "https://example.com/a?id=7",
         ),
         ("  https://example.com/a  ", "https://example.com/a"),
+        (
+            "https://netflixtechblog.com/post-4c26?source=rss----2615bd06b42e---4",
+            "https://netflixtechblog.com/post-4c26",
+        ),
+        ("https://example.com/a?source=docs", "https://example.com/a?source=docs"),
         ("https://bücher.example/", "https://xn--bcher-kva.example/"),
         ("http://[::1]:8000/", "http://[::1]:8000/"),
     ],

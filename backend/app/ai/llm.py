@@ -7,11 +7,19 @@ Providers are tried in order. A provider that answers 429 (rate limited) is
 put on cooldown in Redis and skipped until its limit resets, so a busy free
 tier never makes us wait. Any other failure, including an answer that doesn't
 match the schema, moves on to the next provider.
+
+Two optional limits per provider keep us inside its quota and our budget:
+- requests_per_minute spaces calls evenly (one every 60/N seconds, shared
+  by all workers through Redis), so bursts don't trigger 429s at all.
+- max_calls_per_day caps paid usage; past it, the provider is skipped
+  until midnight UTC.
 """
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -19,6 +27,7 @@ from pydantic import BaseModel, ValidationError
 from redis.asyncio import Redis
 
 from app.config import Settings
+from app.ingestion.politeness import wait_for_slot
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +41,8 @@ class ChatProvider:
     base_url: str  # ends before /chat/completions
     model: str
     api_key: str | None = None
+    requests_per_minute: int | None = None
+    max_calls_per_day: int | None = None
 
 
 class ProviderError(Exception):
@@ -45,7 +56,15 @@ class RateLimitedError(ProviderError):
 
 
 class AllProvidersFailedError(Exception):
-    """No provider produced a valid answer. Worth retrying later."""
+    """No provider produced a valid answer. Worth retrying later.
+
+    retry_after is set when every provider was only waiting (cooldown or daily
+    cap): the number of seconds until the first one is available again.
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 def _retry_after(response: httpx.Response) -> int:
@@ -109,15 +128,50 @@ async def complete_json(
 
 class LLMRouter:
     def __init__(
-        self, client: httpx.AsyncClient, redis: Redis, providers: list[ChatProvider]
+        self,
+        client: httpx.AsyncClient,
+        redis: Redis,
+        providers: list[ChatProvider],
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.client = client
         self.redis = redis
         self.providers = providers
+        self.now = now
 
     @staticmethod
     def _cooldown_key(provider: ChatProvider) -> str:
         return f"llm:cooldown:{provider.name}"
+
+    def _calls_key(self, provider: ChatProvider) -> str:
+        return f"llm:calls:{provider.name}:{self.now().date().isoformat()}"
+
+    def _seconds_until_midnight(self) -> float:
+        now = self.now()
+        midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return (midnight - now).total_seconds()
+
+    async def _wait_needed(self, provider: ChatProvider) -> tuple[str, float] | None:
+        """Why the provider can't be used right now, and for how many seconds."""
+        cooldown = await self.redis.ttl(self._cooldown_key(provider))
+        if cooldown > 0:
+            return "cooling down", float(cooldown)
+        if provider.max_calls_per_day is not None:
+            calls = int(await self.redis.get(self._calls_key(provider)) or 0)
+            if calls >= provider.max_calls_per_day:
+                return (
+                    f"daily limit reached ({calls} calls)",
+                    self._seconds_until_midnight(),
+                )
+        return None
+
+    async def _count_call(self, provider: ChatProvider) -> None:
+        if provider.max_calls_per_day is not None:
+            key = self._calls_key(provider)
+            await self.redis.incr(key)
+            await self.redis.expire(key, 2 * 24 * 60 * 60)
 
     async def generate[T: BaseModel](
         self,
@@ -129,11 +183,23 @@ class LLMRouter:
         response_model: type[T],
     ) -> tuple[T, str]:
         """The first valid answer, and the name of the provider that gave it."""
-        failures = []
+        failures: list[str] = []
+        waits: list[float] = []  # seconds until each waiting provider is free
+        hard_failure = False
         for provider in self.providers:
-            if await self.redis.exists(self._cooldown_key(provider)):
-                failures.append(f"{provider.name}: cooling down")
+            wait = await self._wait_needed(provider)
+            if wait is not None:
+                reason, seconds = wait
+                failures.append(f"{provider.name}: {reason}")
+                waits.append(seconds)
                 continue
+            if provider.requests_per_minute:
+                await wait_for_slot(
+                    self.redis,
+                    f"llm:next:{provider.name}",
+                    60 / provider.requests_per_minute,
+                )
+            await self._count_call(provider)
             try:
                 data = await complete_json(
                     self.client,
@@ -149,12 +215,19 @@ class LLMRouter:
                     self._cooldown_key(provider), "1", ex=error.retry_after
                 )
                 failures.append(f"{provider.name}: {error}")
+                waits.append(float(error.retry_after))
             except ProviderError as error:
                 failures.append(f"{provider.name}: {error}")
+                hard_failure = True
             except ValidationError:
                 failures.append(f"{provider.name}: answer didn't match the schema")
+                hard_failure = True
             logger.warning("LLM provider failed: %s", failures[-1])
-        raise AllProvidersFailedError("; ".join(failures) or "no providers configured")
+
+        retry_after = min(waits) if waits and not hard_failure else None
+        raise AllProvidersFailedError(
+            "; ".join(failures) or "no providers configured", retry_after
+        )
 
 
 def providers_from_settings(settings: Settings) -> list[ChatProvider]:
@@ -167,6 +240,8 @@ def providers_from_settings(settings: Settings) -> list[ChatProvider]:
                 "https://generativelanguage.googleapis.com/v1beta/openai",
                 settings.gemini_model,
                 settings.gemini_api_key,
+                settings.gemini_requests_per_minute,
+                settings.gemini_max_calls_per_day,
             )
         )
     if settings.openai_api_key:
@@ -176,6 +251,8 @@ def providers_from_settings(settings: Settings) -> list[ChatProvider]:
                 "https://api.openai.com/v1",
                 settings.openai_model,
                 settings.openai_api_key,
+                settings.openai_requests_per_minute,
+                settings.openai_max_calls_per_day,
             )
         )
     if settings.ollama_base_url:

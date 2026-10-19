@@ -13,8 +13,11 @@ class InvalidUrlError(ValueError):
     pass
 
 
-def _is_tracking(name: str) -> bool:
+def _is_tracking(name: str, value: str) -> bool:
     name = name.lower()
+    if name == "source":
+        # Medium adds ?source=rss----...; elsewhere "source" can be meaningful
+        return value.lower().startswith("rss")
     return name in TRACKING_PARAMS or name.startswith(TRACKING_PREFIXES)
 
 
@@ -51,7 +54,7 @@ def canonicalize_url(url: str) -> str:
         sorted(
             (name, value)
             for name, value in parse_qsl(parts.query, keep_blank_values=True)
-            if not _is_tracking(name)
+            if not _is_tracking(name, value)
         )
     )
     return urlunsplit((scheme, netloc, parts.path or "/", query, ""))

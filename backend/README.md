@@ -51,7 +51,10 @@ Settings are read from the root `.env`. Environment variables take priority.
 | `CRAWL_DELAY_SECONDS` | No | `1.0` | Minimum time between two requests to the same website |
 | `CRAWL_ALLOW_PRIVATE_HOSTS` | No | `false` | Lets the crawler fetch localhost and private addresses. Only for local testing |
 | `GEMINI_API_KEY` | For enrichment | | First LLM provider (model `GEMINI_MODEL`, default `gemini-3.1-flash-lite`) |
+| `GEMINI_REQUESTS_PER_MINUTE` | No | none | Spaces Gemini calls evenly across all workers, to stay under the per-minute limit |
+| `GEMINI_MAX_CALLS_PER_DAY` | No | `1000` | Budget guard: after this many calls in a UTC day, Gemini is skipped until midnight |
 | `OPENAI_API_KEY` | No | | Second LLM provider (model `OPENAI_MODEL`, default `gpt-5.6-luna`) |
+| `OPENAI_REQUESTS_PER_MINUTE` / `OPENAI_MAX_CALLS_PER_DAY` | No | none / `1000` | Same limits for OpenAI |
 | `OLLAMA_BASE_URL` | No | | Third LLM provider, a local model, e.g. `http://localhost:11434/v1` (model `OLLAMA_MODEL`, default `llama3.2`) |
 | `VOYAGE_API_KEY` | No | | Embeddings (model `VOYAGE_MODEL`, default `voyage-4-lite`); without it, pages have no embedding |
 | `SAFE_BROWSING_API_KEY` | No | | Google Safe Browsing; without it, pages can't be auto-approved |
@@ -222,7 +225,9 @@ Topics with confidence 0.6 or more (up to 3) are saved in `page_topics` with the
 
 **LLM failover** (`app/ai/llm.py`): Gemini, OpenAI, and Ollama all speak the OpenAI chat completions protocol, so one small client handles all three. Providers are tried in that order. A provider that answers `429` goes on a Redis cooldown (its `Retry-After`, or 60 seconds) and is skipped until then; any other failure, including an answer that doesn't match the schema, moves on to the next. Embeddings have no fallback on purpose: vectors from different models can't be compared.
 
-If a service is down, the task retries after 30 seconds and 5 minutes. After that the page stays `pending`; `make enrich` queues every pending page that hasn't been enriched.
+**Pacing and budget** (optional, per provider): `*_REQUESTS_PER_MINUTE` spaces calls one every 60/N seconds through a Redis key shared by all workers, so a burst of new pages waits its turn instead of triggering `429`s. `*_MAX_CALLS_PER_DAY` counts calls per UTC day in Redis (`llm:calls:{provider}:{date}`); past the cap, the provider is skipped until midnight, which protects a paid tier from a runaway day.
+
+**Retries:** if a service fails, the task retries after 30 seconds and 5 minutes. When every provider is only cooling down, it waits for the cooldown instead (for example, 121 seconds for a `Retry-After: 120`). Waits over 15 minutes, such as a daily cap, don't hold the job open: the page stays `pending`, and the hourly `enrich_pending` job (at minute 15) queues pending pages that were never enriched. `make enrich` does the same right away. A Redis lock per page stops two jobs from enriching, and paying for, the same page.
 
 ### Enrichment API keys
 
@@ -246,7 +251,7 @@ make scheduler      # terminal 2: queues the check every day at 03:00 UTC
 make check-links    # or run it right now
 ```
 
-The scheduler (taskiq's `TaskiqScheduler`) reads the `schedule` label on the `check_links` task and queues it daily. Run only one scheduler; two would queue every check twice. The task finds up to 200 approved pages that are due (`next_check_at` has passed, or never checked), oldest first, and queues one `recheck_page` job each.
+The scheduler (taskiq's `TaskiqScheduler`) reads the `schedule` labels on the tasks: `poll_feeds` daily at 02:00 UTC, `check_links` daily at 03:00 UTC, and `enrich_pending` every hour at minute 15. Run only one scheduler; two would queue every check twice. The task finds up to 200 approved pages that are due (`next_check_at` has passed, or never checked), oldest first, and queues one `recheck_page` job each.
 
 | Result of the check | What happens |
 | --- | --- |

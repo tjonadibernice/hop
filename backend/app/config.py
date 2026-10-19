@@ -7,7 +7,10 @@ ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
+    # env_ignore_empty: a line like GEMINI_REQUESTS_PER_MINUTE= means "not set"
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILE, extra="ignore", env_ignore_empty=True
+    )
 
     database_url: str
     redis_url: str
@@ -32,8 +35,12 @@ class Settings(BaseSettings):
     # that provider. Ollama runs locally and needs no key.
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_requests_per_minute: int | None = None  # space calls; empty = no limit
+    gemini_max_calls_per_day: int | None = 1000  # budget guard for paid tiers
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.6-luna"
+    openai_requests_per_minute: int | None = None
+    openai_max_calls_per_day: int | None = 1000
     ollama_base_url: str | None = None  # e.g. http://localhost:11434/v1
     ollama_model: str = "llama3.2"
 

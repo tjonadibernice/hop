@@ -32,6 +32,9 @@ APPROVE_QUALITY = 0.6
 REJECT_QUALITY = 0.3
 TOPIC_CONFIDENCE = 0.6
 RETRY_DELAYS_SECONDS = (30, 300)
+# Longer waits (e.g. a daily cap until midnight) don't hold a job open; the
+# page stays pending and the hourly enrich_pending sweep picks it up later
+MAX_WAIT_IN_JOB_SECONDS = 15 * 60
 FIRST_LINK_CHECK_AFTER = timedelta(days=30)  # the page was just fetched
 
 
@@ -64,7 +67,14 @@ class EnrichResult:
 
 
 class EnrichmentRetryableError(Exception):
-    """A service we depend on failed; trying again later may work."""
+    """A service we depend on failed; trying again later may work.
+
+    retry_after, when known, is how long until the service is available.
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 SYSTEM_PROMPT = """\
@@ -235,7 +245,9 @@ async def enrich_page(
             response_model=PageAnalysis,
         )
     except AllProvidersFailedError as error:
-        raise EnrichmentRetryableError(f"LLM: {error}") from error
+        raise EnrichmentRetryableError(
+            f"LLM: {error}", retry_after=error.retry_after
+        ) from error
 
     topics = confident_topics(analysis, set(topic_ids))
     decision = route(analysis, safety, topics)
@@ -267,17 +279,41 @@ async def enrich_with_retries(
     services: EnrichServices,
     page_id: uuid.UUID,
     delays: Sequence[float] = RETRY_DELAYS_SECONDS,
+    max_wait: float = MAX_WAIT_IN_JOB_SECONDS,
 ) -> EnrichResult | None:
-    """enrich_page, retried with growing waits. After the last try the page
-    stays pending, so `make enrich` can queue it again later."""
+    """enrich_page, retried with growing waits.
+
+    When the failure says how long to wait (a provider cooling down), that
+    wait is used instead. If it's longer than max_wait, or the retries run
+    out, the page stays pending and a pending result is returned; the hourly
+    sweep (pending_page_ids) queues it again.
+    """
     for attempt in range(len(delays) + 1):
         try:
             async with session_factory() as session:
                 return await enrich_page(session, services, page_id)
         except EnrichmentRetryableError as error:
-            if attempt == len(delays):
-                logger.error("Giving up on %s for now: %s", page_id, error)
-                raise
-            logger.info("Retrying %s in %ss (%s)", page_id, delays[attempt], error)
-            await asyncio.sleep(delays[attempt])
+            wait = delays[attempt] if attempt < len(delays) else None
+            if error.retry_after is not None and wait is not None:
+                wait = max(wait, error.retry_after + 1)
+            if wait is None or wait > max_wait:
+                logger.info("Leaving %s pending for now: %s", page_id, error)
+                return EnrichResult(page_id, "pending", f"will retry later ({error})")
+            logger.info("Retrying %s in %.0fs (%s)", page_id, wait, error)
+            await asyncio.sleep(wait)
     raise AssertionError("unreachable")
+
+
+async def pending_page_ids(
+    session: AsyncSession, older_than: datetime, limit: int | None = None
+) -> list[uuid.UUID]:
+    """Pending pages never enriched, oldest first. older_than skips pages that
+    were just stored, whose enrichment job is probably still queued."""
+    query = (
+        select(Page.id)
+        .where(Page.status == "pending", Page.enriched_at.is_(None))
+        .where(Page.created_at < older_than)
+        .order_by(Page.created_at)
+        .limit(limit)
+    )
+    return list(await session.scalars(query))
