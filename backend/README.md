@@ -1,6 +1,6 @@
 # Hop Backend
 
-FastAPI service for Hop. It serves the API, connects to Postgres (with pgvector) and Redis, handles sign-up with email verification and login with server-side sessions, stores users' interests, serves pages through the Hop endpoint, and records likes and dislikes. A background worker runs the ingestion pipeline, which fetches, cleans, and deduplicates new pages, then enriches them with an LLM and embeddings and decides which ones Hop shows. A daily scheduled job re-checks approved pages and retires the ones that broke.
+FastAPI service for Hop. It serves the API, connects to Postgres (with pgvector) and Redis, handles sign-up with email verification and login with server-side sessions, stores users' interests, serves pages through the Hop endpoint, and records likes and dislikes. A background worker runs the ingestion pipeline, which fetches, cleans, and deduplicates new pages, then enriches them with an LLM and embeddings and decides which ones Hop shows. Daily scheduled jobs re-check approved pages, retire the ones that broke, and find new pages from RSS/Atom feeds and from the links inside approved pages.
 
 ## Requirements
 
@@ -259,6 +259,34 @@ The scheduler (taskiq's `TaskiqScheduler`) reads the `schedule` label on the `ch
 
 Newly approved pages get their first check 30 days after enrichment. Hand-picked seed pages are fingerprinted on their first check. Hop only shows `approved` pages, so dead pages simply stop appearing.
 
+### Where new pages come from
+
+| Source | How | `pages.source` |
+| --- | --- | --- |
+| Starter pages | `make seed` (approved without screening) | `seed` |
+| Your URL lists | `make ingest` or `make ingest f=list.txt` | `manual` |
+| RSS/Atom feeds | Daily at 02:00 UTC, or `make poll-feeds` | `feed` |
+| Links in approved pages | Automatically, once per page | `link` |
+
+Every source goes through the same pipeline: safe fetching, deduplication, screening, and link checks.
+
+**Feeds** (`app/ingestion/feeds.py`): list feed URLs in `app/ingestion/feeds.txt`, one per line. To find a site's feed, look for an RSS icon or a "Subscribe" link, or search the page source for `application/rss+xml` or `application/atom+xml`; common addresses are `/feed`, `/rss`, `/atom.xml`, and `/index.xml`. The `poll_feeds` job queues one `poll_feed` job per feed. Each poll:
+
+- fetches the feed with the safe fetcher (robots.txt, SSRF checks, politeness),
+- sends `If-None-Match` / `If-Modified-Since` from the last poll (stored in Redis), so an unchanged feed answers `304 Not Modified` and costs the site almost nothing,
+- reads RSS or Atom with [feedparser](https://pypi.org/project/feedparser/), takes the 20 newest posts from the last 30 days (posts without dates are kept), and queues the ones Hop doesn't have.
+
+A broken feed is logged and tried again the next day; it doesn't stop the others.
+
+**Link discovery** (`app/ingestion/discovery.py`): at ingestion, the links inside the article text (not menus or footers) are saved in `pages.outlinks`, up to 50. When a page is approved, or a seed page passes its first link check, its links are queued once (`links_queued_at`), with these limits:
+
+| Limit | Value | Why |
+| --- | --- | --- |
+| Depth | Only `seed`, `manual`, and `feed` pages (depth 0) share links; pages found through links (depth 1) don't | Discovery stays one step away from pages a person or a feed chose, so it can't turn into an endless crawl |
+| Links per page | 10, and at most 3 to any one site | One link-heavy page can't flood the queue |
+| Pages per site | 50 in the library (`pages.site`, the host without `www.`) | No single site takes over |
+| Skipped | Known pages, blocked domains, social and video sites, links to files (PDFs, images, archives) | They're not articles, or we already have them |
+
 ## Database migrations
 
 Migrations are managed with [Alembic](https://alembic.sqlalchemy.org/) and live in `migrations/versions/`.
@@ -298,6 +326,9 @@ app/
 │   └── embeddings.py    # Voyage embeddings
 ├── ingestion/           # Ingestion pipeline
 │   ├── pipeline.py      # The steps for one URL, and retries
+│   ├── feeds.py         # RSS and Atom feeds
+│   ├── feeds.txt        # Feeds to check daily
+│   ├── discovery.py     # Queuing links from approved pages
 │   ├── linkrot.py       # Re-checks approved pages, retires broken ones
 │   ├── enrich.py        # LLM analysis, embedding, and routing rules
 │   ├── safety.py        # Blocklist and Safe Browsing
@@ -339,6 +370,7 @@ migrations/
 scripts/
 ├── check_embeddable.py  # Checks unchecked pages for iframe support
 ├── check_links.py       # Runs the link check now
+├── poll_feeds.py        # Checks the feeds now
 ├── enqueue_enrichment.py  # Queues pending pages for enrichment
 ├── enqueue_urls.py      # Queues a URL list for the worker
 ├── sources.txt          # Sample URLs for make ingest
@@ -350,6 +382,8 @@ tests/
 ├── test_embeds.py       # Iframe header rules
 ├── test_embeddings.py   # Voyage client
 ├── test_enrich.py       # Routing rules and enrichment
+├── test_discovery.py    # Article links, filters, caps, depth
+├── test_feeds.py        # RSS/Atom parsing, conditional requests
 ├── test_linkrot.py      # Link checks: due pages, failures, dead, changed
 ├── test_llm.py          # Provider failover and cooldowns
 ├── test_safety.py       # Blocklist and Safe Browsing

@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from urllib.parse import urljoin
 
+import lxml.etree
 import lxml.html
 import trafilatura
 from lxml.etree import ParserError
@@ -53,3 +54,24 @@ def extract_article(html: bytes, url: str) -> Extracted | None:
         canonical_url=canonical_link(html, url),
         word_count=len(text.split()),
     )
+
+
+def article_links(html: bytes, url: str) -> list[str]:
+    """Absolute http(s) links inside the main article, in page order, no repeats.
+
+    Menus, sidebars, and footers are left out: trafilatura keeps only the
+    article, and its XML output marks each link as <ref target="...">.
+    """
+    xml = trafilatura.extract(html, url=url, output_format="xml", include_links=True)
+    if xml is None:
+        return []
+    try:
+        root = lxml.etree.fromstring(xml.encode())
+    except lxml.etree.XMLSyntaxError:
+        return []
+    links: list[str] = []
+    for ref in root.iter("ref"):
+        target = urljoin(url, (ref.get("target") or "").strip())
+        if target.startswith(("http://", "https://")) and target not in links:
+            links.append(target)
+    return links

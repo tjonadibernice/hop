@@ -39,6 +39,7 @@ class Page(Base):
         ),
         Index("ix_pages_status", "status"),
         Index("ix_pages_next_check_at", "next_check_at"),
+        Index("ix_pages_site", "site"),
         # GIN index: finds rows whose array shares any element with a given array
         Index("ix_pages_simhash_bands", "simhash_bands", postgresql_using="gin"),
         # HNSW index for fast "most similar pages" queries (the recommender)
@@ -57,6 +58,8 @@ class Page(Base):
     url: Mapped[str] = mapped_column(String(2048), unique=True)
     # The normalized address used to spot duplicates (see ingestion/urls.py)
     canonical_url: Mapped[str] = mapped_column(String(2048), unique=True)
+    # The host without "www.", used to cap how many pages one site can have
+    site: Mapped[str | None] = mapped_column(String(255))
     title: Mapped[str] = mapped_column(String(300))
     summary: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), server_default=text("'pending'"))
@@ -69,6 +72,13 @@ class Page(Base):
     # Filled in by the ingestion pipeline. deferred=True: the article text is
     # only loaded when it's used, not with every page (hops never need it)
     content: Mapped[str | None] = mapped_column(Text, deferred=True)
+    # Where the page came from: seed, manual (make ingest), feed, or link
+    source: Mapped[str] = mapped_column(String(16), server_default=text("'manual'"))
+    # How many links away from a hand-picked or feed page (see discovery.py)
+    depth: Mapped[int] = mapped_column(server_default=text("0"))
+    # Links found in the article text, queued once the page is approved
+    outlinks: Mapped[list[str] | None] = mapped_column(ARRAY(Text), deferred=True)
+    links_queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     word_count: Mapped[int | None]
     simhash: Mapped[int | None] = mapped_column(BigInteger)
     simhash_bands: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))

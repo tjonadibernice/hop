@@ -49,16 +49,31 @@ def article(seed: int, words: int = 400) -> str:
     return " ".join(rng.choice(WORDS) for _ in range(words))
 
 
-def html_page(text: str, *, title: str = "A page", canonical: str | None = None) -> str:
+def html_page(
+    text: str,
+    *,
+    title: str = "A page",
+    canonical: str | None = None,
+    links: list[str] = (),
+) -> str:
+    """A page with menus and a footer around the article. `links` go inside
+    the article text; the menu and footer have links of their own that
+    discovery must ignore."""
     link = f'<link rel="canonical" href="{canonical}">' if canonical else ""
-    paragraphs = "".join(
-        f"<p>{' '.join(text.split()[i : i + 50])}.</p>"
-        for i in range(0, len(text.split()), 50)
-    )
+    chunks = [
+        " ".join(text.split()[i : i + 50]) for i in range(0, len(text.split()), 50)
+    ]
+    if links and chunks:
+        # Inside a sentence, the way real articles link (a paragraph made of
+        # nothing but links looks like a menu and gets dropped)
+        anchors = " and ".join(f'<a href="{url}">this guide</a>' for url in links)
+        chunks[0] += f", as explained in {anchors}, and more"
+    paragraphs = "".join(f"<p>{chunk}.</p>" for chunk in chunks)
     return (
         f"<html><head><title>{title}</title>{link}</head>"
-        f"<body><nav>Home About</nav><article><h1>{title}</h1>{paragraphs}"
-        "</article><footer>Contact</footer></body></html>"
+        '<body><nav><a href="/">Home</a> <a href="/about">About</a></nav>'
+        f"<article><h1>{title}</h1>{paragraphs}</article>"
+        '<footer><a href="https://twitter.com/hop">Contact</a></footer></body></html>'
     )
 
 

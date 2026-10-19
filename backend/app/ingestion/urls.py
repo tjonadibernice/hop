@@ -55,3 +55,9 @@ def canonicalize_url(url: str) -> str:
         )
     )
     return urlunsplit((scheme, netloc, parts.path or "/", query, ""))
+
+
+def site_of(url: str) -> str:
+    """The host without "www.": www.example.com and example.com are one site."""
+    host = urlsplit(url).hostname or ""
+    return host.removeprefix("www.")

@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from sqlalchemy.orm import undefer
 
 from app.ingestion.linkrot import (
     MAX_FAILURES,
@@ -102,9 +103,11 @@ async def test_seed_page_gets_a_fingerprint_on_its_first_check(
 
     await check(session_factory, fetcher, page)
 
-    saved = await load(session_factory, page)
+    async with session_factory() as session:
+        saved = await session.get(Page, page.id, options=[undefer(Page.outlinks)])
     assert saved.simhash is not None
     assert len(saved.simhash_bands) == 8
+    assert saved.outlinks == []  # links kept so discovery can use them
 
 
 async def test_failures_are_retried_then_the_page_dies(session_factory, web, fetcher):

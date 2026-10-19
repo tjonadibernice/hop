@@ -6,6 +6,10 @@ Tasks:
   needs review.
 - check_links (daily, 03:00 UTC): queue recheck_page for every approved page
   that's due, which retires pages that broke (see ingestion/linkrot.py).
+- poll_feeds (daily, 02:00 UTC): queue poll_feed for every feed in
+  ingestion/feeds.txt, which queues new posts for ingestion.
+- After a page is approved (or passes a link check for the first time), its
+  article links are queued for ingestion too (see ingestion/discovery.py).
 
 Run the worker with:     uv run taskiq worker app.worker:broker
 Run the scheduler with:  uv run taskiq scheduler app.worker:scheduler
@@ -28,10 +32,12 @@ from app.ai.llm import LLMRouter, providers_from_settings
 from app.cache import create_redis
 from app.config import settings
 from app.db import create_db_engine, create_session_factory
+from app.ingestion.discovery import links_to_queue
 from app.ingestion.enrich import EnrichServices, enrich_with_retries
-from app.ingestion.fetch import SafeFetcher
+from app.ingestion.feeds import FeedError, load_feeds, new_post_urls
+from app.ingestion.fetch import FetchError, RobotsDisallowedError, SafeFetcher
 from app.ingestion.linkrot import due_page_ids, recheck_page
-from app.ingestion.network import ensure_public_host
+from app.ingestion.network import HostNotFoundError, UnsafeUrlError, ensure_public_host
 from app.ingestion.pipeline import Outcome, ingest_with_retries
 from app.ingestion.safety import SafetyChecker, load_blocklist
 from app.models import EMBEDDING_DIMENSIONS
@@ -74,6 +80,7 @@ async def startup(state: TaskiqState) -> None:
 
     # Model calls can be slow; give them their own client and timeout
     state.ai_http = httpx.AsyncClient(timeout=60)
+    state.blocklist = load_blocklist()
     providers = providers_from_settings(settings)
     if not providers:
         logger.warning(
@@ -85,7 +92,7 @@ async def startup(state: TaskiqState) -> None:
         safety=SafetyChecker(
             state.ai_http,
             api_key=settings.safe_browsing_api_key,
-            blocklist=load_blocklist(),
+            blocklist=state.blocklist,
         ),
         embedder=(
             VoyageEmbedder(
@@ -108,12 +115,28 @@ async def shutdown(state: TaskiqState) -> None:
     await state.engine.dispose()
 
 
+async def share_links(state: TaskiqState, page_id: uuid.UUID) -> int:
+    """Queue an approved page's article links for ingestion (once per page)."""
+    async with state.session_factory() as session:
+        links, depth = await links_to_queue(session, page_id, state.blocklist)
+    for link in links:
+        await ingest_url_task.kiq(link, source="link", depth=depth)
+    if links:
+        logger.info("discovery: %s shared %d links", page_id, len(links))
+    return len(links)
+
+
 @broker.task(task_name="ingest_url")
 async def ingest_url_task(
-    url: str, context: Annotated[Context, TaskiqDepends()]
+    url: str,
+    context: Annotated[Context, TaskiqDepends()],
+    source: str = "manual",
+    depth: int = 0,
 ) -> dict[str, Any]:
     state = context.state
-    result = await ingest_with_retries(state.session_factory, state.fetcher, url)
+    result = await ingest_with_retries(
+        state.session_factory, state.fetcher, url, source=source, depth=depth
+    )
     logger.info("%s: %s %s", result.outcome, url, result.detail or "")
     if result.outcome == Outcome.ADDED and result.page_id is not None:
         await enrich_page_task.kiq(str(result.page_id))
@@ -138,6 +161,8 @@ async def enrich_page_task(
     logger.info(
         "%s: %s (%s) via %s", result.status, page_id, result.reason, result.provider
     )
+    if result.status == "approved":
+        await share_links(state, result.page_id)
     return {**asdict(result), "page_id": page_id}
 
 
@@ -164,6 +189,53 @@ async def recheck_page_task(
         result = await recheck_page(session, state.fetcher, uuid.UUID(page_id))
     if result is None:
         return None
-    if result.outcome != "alive":
+    if result.outcome == "alive":
+        # Seed pages share their links after their first successful check
+        await share_links(state, result.page_id)
+    else:
         logger.info("link check %s: %s (%s)", result.outcome, page_id, result.reason)
     return {**asdict(result), "page_id": page_id}
+
+
+@broker.task(
+    task_name="poll_feeds",
+    schedule=[{"cron": "0 2 * * *", "schedule_id": "daily-feed-poll"}],
+)
+async def poll_feeds_task(context: Annotated[Context, TaskiqDepends()]) -> dict:
+    """Queue one poll_feed job per feed in feeds.txt."""
+    feeds = load_feeds()
+    for feed_url in feeds:
+        await poll_feed_task.kiq(feed_url)
+    logger.info("feeds: queued %d feeds", len(feeds))
+    return {"queued": len(feeds)}
+
+
+@broker.task(task_name="poll_feed")
+async def poll_feed_task(
+    feed_url: str, context: Annotated[Context, TaskiqDepends()]
+) -> dict[str, Any]:
+    """Queue the feed's recent posts that Hop doesn't have yet."""
+    state = context.state
+    try:
+        async with state.session_factory() as session:
+            urls = await new_post_urls(
+                session, state.fetcher, state.redis, feed_url, datetime.now(UTC)
+            )
+    except (
+        FeedError,
+        FetchError,
+        RobotsDisallowedError,
+        UnsafeUrlError,
+        HostNotFoundError,
+    ) as error:
+        # A broken feed shouldn't stop the others; it's tried again tomorrow
+        logger.warning("feed failed: %s (%s)", feed_url, error)
+        return {
+            "feed": feed_url,
+            "queued": 0,
+            "error": str(error) or type(error).__name__,
+        }
+    for url in urls:
+        await ingest_url_task.kiq(url, source="feed")
+    logger.info("feed %s: %d new posts", feed_url, len(urls))
+    return {"feed": feed_url, "queued": len(urls)}

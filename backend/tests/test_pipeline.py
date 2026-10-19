@@ -47,6 +47,26 @@ async def test_new_page_is_stored_as_pending(session_factory, web, fetcher):
         assert len(page.simhash_bands) == 8
         assert page.embeddable is True
         assert page.last_checked_at is not None
+        assert (page.source, page.depth, page.site) == ("manual", 0, "blog.test")
+
+
+async def test_feed_and_link_pages_record_where_they_came_from(
+    session_factory, web, fetcher
+):
+    web.add_html(
+        "https://www.blog.test/post",
+        html_page(article(1), links=["https://other.test/a", "/b"]),
+    )
+
+    result = None
+    async with session_factory() as session:
+        result = await ingest_url(
+            session, fetcher, "https://www.blog.test/post", source="link", depth=1
+        )
+    async with session_factory() as session:
+        page = await session.get(Page, result.page_id, options=[undefer(Page.outlinks)])
+        assert (page.source, page.depth, page.site) == ("link", 1, "blog.test")
+        assert page.outlinks == ["https://other.test/a", "https://www.blog.test/b"]
 
 
 async def test_frame_blocking_headers_are_recorded(session_factory, web, fetcher):

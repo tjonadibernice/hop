@@ -1,0 +1,11 @@
+# RSS or Atom feeds Hop checks every day for new posts, one URL per line.
+# Lines starting with # are ignored.
+#
+# To find a site's feed: look for an RSS icon or a "Subscribe"/"Feed" link,
+# or open the page source and search for "application/rss+xml" or
+# "application/atom+xml". Common addresses: /feed, /rss, /atom.xml, /index.xml.
+#
+# Examples (check they still work before turning them on):
+# https://jvns.ca/atom.xml
+# https://martinfowler.com/feed.atom
+# https://simonwillison.net/atom/everything/

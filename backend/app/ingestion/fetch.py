@@ -67,7 +67,12 @@ class SafeFetcher:
         self.resolver = resolver
 
     async def get(
-        self, url: str, *, max_bytes: int, check_robots: bool = True
+        self,
+        url: str,
+        *,
+        max_bytes: int,
+        check_robots: bool = True,
+        headers: dict[str, str] | None = None,
     ) -> Fetched:
         """GET a URL, following redirects one at a time.
 
@@ -83,7 +88,7 @@ class SafeFetcher:
                 raise RobotsDisallowedError(current)
             await wait_for_turn(self.redis, host, self.delay_seconds)
 
-            fetched = await self._request(current, max_bytes)
+            fetched = await self._request(current, max_bytes, headers or {})
             location = fetched.headers.get("location")
             if fetched.status_code in REDIRECT_CODES and location:
                 current = urljoin(current, location)
@@ -91,10 +96,12 @@ class SafeFetcher:
             return fetched
         raise FetchError("too_many_redirects")
 
-    async def _request(self, url: str, max_bytes: int) -> Fetched:
+    async def _request(
+        self, url: str, max_bytes: int, headers: dict[str, str]
+    ) -> Fetched:
         try:
             async with self.client.stream(
-                "GET", url, headers={"User-Agent": self.user_agent}
+                "GET", url, headers={**headers, "User-Agent": self.user_agent}
             ) as response:
                 # Read in chunks and stop early, so a huge file can't fill memory
                 body = bytearray()

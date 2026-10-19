@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.db import create_db_engine, create_session_factory
-from app.ingestion.urls import canonicalize_url
+from app.ingestion.urls import canonicalize_url, site_of
 from app.models import Page, Topic
 
 SEED_FILE = Path(__file__).with_name("seed_pages.json")
@@ -44,6 +44,8 @@ async def seed() -> None:
                 Page(
                     url=entry["url"],
                     canonical_url=canonicalize_url(entry["url"]),
+                    site=site_of(entry["url"]),
+                    source="seed",
                     title=entry["title"],
                     summary=entry["summary"],
                     topics=[topics_by_slug[slug] for slug in entry["topics"]],

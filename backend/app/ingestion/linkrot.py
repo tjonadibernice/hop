@@ -20,12 +20,13 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from urllib.parse import urlsplit
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
-from app.ingestion.extract import extract_article
+from app.ingestion.discovery import MAX_STORED_LINKS
+from app.ingestion.extract import article_links, extract_article
 from app.ingestion.fetch import FetchError, RobotsDisallowedError, SafeFetcher
 from app.ingestion.network import HostNotFoundError, UnsafeUrlError
 from app.ingestion.pipeline import HTML_TYPES, MAX_PAGE_BYTES, MIN_WORDS
@@ -36,6 +37,7 @@ from app.ingestion.simhash import (
     simhash,
     to_signed,
 )
+from app.ingestion.urls import site_of
 from app.models import Page
 from app.services.embeds import allows_framing
 
@@ -76,12 +78,6 @@ async def due_page_ids(
     return list(rows)
 
 
-def _site(url: str) -> str:
-    """The host without "www.", so example.com -> www.example.com isn't a move."""
-    host = urlsplit(url).hostname or ""
-    return host.removeprefix("www.")
-
-
 def _alive(page: Page, now: datetime) -> CheckOutcome:
     page.check_failures = 0
     page.last_checked_at = now
@@ -116,7 +112,7 @@ async def recheck_page(
 ) -> CheckResult | None:
     """Check one approved page and save the result. None if it's not approved."""
     now = now or datetime.now(UTC)
-    page = await session.get(Page, page_id)
+    page = await session.get(Page, page_id, options=[undefer(Page.outlinks)])
     if page is None or page.status != "approved":
         return None
 
@@ -147,8 +143,8 @@ async def _check(
     if fetched.status_code >= 400:
         return _failed(page, now, f"HTTP {fetched.status_code}")
 
-    if _site(page.url) != _site(fetched.url):
-        _retire(page, now, "needs_review", f"now redirects to {_site(fetched.url)}")
+    if site_of(page.url) != site_of(fetched.url):
+        _retire(page, now, "needs_review", f"now redirects to {site_of(fetched.url)}")
         return CheckOutcome.CHANGED, page.status_reason
 
     content_type = fetched.headers.get("content-type", "").split(";")[0].strip().lower()
@@ -172,4 +168,7 @@ async def _check(
         page.simhash_bands = band_keys(fingerprint)
 
     page.embeddable = allows_framing(fetched.headers)
+    if page.outlinks is None:
+        # Seed pages were never fetched by the pipeline; keep their links now
+        page.outlinks = article_links(fetched.body, fetched.url)[:MAX_STORED_LINKS]
     return _alive(page, now), None

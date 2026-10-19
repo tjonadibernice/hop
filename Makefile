@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links check test-db
+.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links poll-feeds check test-db
 
 up:
 	docker compose up -d
@@ -44,6 +44,9 @@ enrich:
 
 check-links:
 	cd backend && uv run python -m scripts.check_links
+
+poll-feeds:
+	cd backend && uv run python -m scripts.poll_feeds
 
 lint:
 	cd backend && uv run ruff check .

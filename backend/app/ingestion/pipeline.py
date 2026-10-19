@@ -13,7 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.ingestion.extract import extract_article
+from app.ingestion.discovery import MAX_STORED_LINKS
+from app.ingestion.extract import article_links, extract_article
 from app.ingestion.fetch import FetchError, RobotsDisallowedError, SafeFetcher
 from app.ingestion.network import HostNotFoundError, UnsafeUrlError
 from app.ingestion.simhash import (
@@ -24,7 +25,7 @@ from app.ingestion.simhash import (
     simhash,
     to_signed,
 )
-from app.ingestion.urls import InvalidUrlError, canonicalize_url
+from app.ingestion.urls import InvalidUrlError, canonicalize_url, site_of
 from app.models import Page
 from app.services.embeds import allows_framing
 
@@ -100,9 +101,17 @@ async def _find_near_duplicate(
 
 
 async def ingest_url(
-    session: AsyncSession, fetcher: SafeFetcher, url: str
+    session: AsyncSession,
+    fetcher: SafeFetcher,
+    url: str,
+    *,
+    source: str = "manual",
+    depth: int = 0,
 ) -> IngestResult:
     """Fetch one URL and store it as a pending page.
+
+    source says where the URL came from (manual, feed, or link) and depth how
+    many links away it is from a page a person or a feed chose.
 
     Raises FetchError(retryable=True) for problems that may go away
     (timeouts, server errors); every other problem becomes an outcome.
@@ -161,6 +170,10 @@ async def ingest_url(
     page = Page(
         url=fetched.url,
         canonical_url=final_canonical,
+        site=site_of(final_canonical),
+        source=source,
+        depth=depth,
+        outlinks=article_links(fetched.body, fetched.url)[:MAX_STORED_LINKS],
         title=(article.title or final_canonical)[:300],
         content=article.text,
         word_count=article.word_count,
@@ -185,12 +198,17 @@ async def ingest_with_retries(
     fetcher: SafeFetcher,
     url: str,
     delays: Sequence[float] = RETRY_DELAYS_SECONDS,
+    *,
+    source: str = "manual",
+    depth: int = 0,
 ) -> IngestResult:
     """ingest_url, retried with growing waits when the failure may be temporary."""
     for attempt in range(len(delays) + 1):
         try:
             async with session_factory() as session:
-                return await ingest_url(session, fetcher, url)
+                return await ingest_url(
+                    session, fetcher, url, source=source, depth=depth
+                )
         except FetchError as error:
             if attempt == len(delays):
                 return IngestResult(Outcome.FETCH_FAILED, url, detail=error.reason)
