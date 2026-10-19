@@ -15,6 +15,9 @@ Tasks:
 - refill_hop_queue: pick pages ahead of time for one user's hop queue (see
   services/hop_queue.py). The API queues it when a user's queue runs low.
   It has its own stream, so a backlog of ingestion jobs can't delay it.
+- curate_page: the curator agent reviews one needs_review page (see
+  app/curator). Queued when enrichment or a link check sends a page to
+  review; curate_pending (hourly, at :45) catches any it missed.
 
 Run the worker with:     uv run taskiq worker app.worker:broker
 Run the scheduler with:  uv run taskiq scheduler app.worker:scheduler
@@ -36,6 +39,14 @@ from app.ai.embeddings import VoyageEmbedder
 from app.ai.llm import LLMRouter, providers_from_settings
 from app.cache import create_redis
 from app.config import settings
+from app.curator.model import RouterAgentModel
+from app.curator.service import (
+    CuratorRetryableError,
+    CuratorServices,
+    curate_page,
+    uncurated_page_ids,
+)
+from app.curator.tools import TOOL_SPECS
 from app.db import create_db_engine, create_session_factory
 from app.ingestion.discovery import links_to_queue
 from app.ingestion.enrich import EnrichServices, enrich_with_retries, pending_page_ids
@@ -59,6 +70,8 @@ RESULT_TTL_SECONDS = 7 * 24 * 60 * 60
 ENRICH_LOCK_SECONDS = 30 * 60
 SWEEP_SKIPS_NEWER_THAN = timedelta(minutes=10)
 SWEEP_BATCH_SIZE = 100
+CURATE_LOCK_SECONDS = 15 * 60
+CURATE_BATCH_SIZE = 20
 
 REFILL_STREAM = "hop:refill"
 
@@ -118,6 +131,14 @@ async def startup(state: TaskiqState) -> None:
             if settings.voyage_api_key
             else None
         ),
+    )
+
+    state.curator = CuratorServices(
+        model=RouterAgentModel(state.enrich.llm, state.ai_http, TOOL_SPECS),
+        safety=state.enrich.safety,
+        fetcher=state.fetcher,
+        max_turns=settings.curator_max_turns,
+        max_tool_calls=settings.curator_max_tool_calls,
     )
 
 
@@ -186,6 +207,8 @@ async def enrich_page_task(
     )
     if result.status == "approved":
         await share_links(state, result.page_id)
+    elif result.status == "needs_review" and settings.curator_enabled:
+        await curate_page_task.kiq(page_id)
     return {**asdict(result), "page_id": page_id}
 
 
@@ -215,6 +238,9 @@ async def recheck_page_task(
     if result.outcome == "alive":
         # Seed pages share their links after their first successful check
         await share_links(state, result.page_id)
+    elif result.outcome == "changed" and settings.curator_enabled:
+        await curate_page_task.kiq(page_id)
+        logger.info("link check changed: %s (%s)", page_id, result.reason)
     else:
         logger.info("link check %s: %s (%s)", result.outcome, page_id, result.reason)
     return {**asdict(result), "page_id": page_id}
@@ -294,3 +320,56 @@ async def refill_hop_queue_task(
         # Let the next low queue ask again
         await hop_queue.release_refill(state.redis, user)
     return {"user_id": user_id, "added": added}
+
+
+@broker.task(task_name="curate_page")
+async def curate_page_task(
+    page_id: str, context: Annotated[Context, TaskiqDepends()]
+) -> dict[str, Any] | None:
+    """The curator agent reviews one needs_review page."""
+    state = context.state
+    lock = f"curate:lock:{page_id}"
+    if not await state.redis.set(lock, "1", nx=True, ex=CURATE_LOCK_SECONDS):
+        logger.info("skipped %s: already being curated", page_id)
+        return None
+    try:
+        result = await curate_page(
+            state.session_factory, state.curator, uuid.UUID(page_id)
+        )
+    except CuratorRetryableError as error:
+        # Stays uncurated; the hourly sweep queues it again
+        logger.info("curator will retry %s later: %s", page_id, error)
+        return {"page_id": page_id, "status": "retry later", "reason": str(error)}
+    finally:
+        await state.redis.delete(lock)
+    if result is None:
+        return None
+    blocked = f" [blocked: {result.blocked_by}]" if result.blocked_by else ""
+    logger.info(
+        "curator %s -> %s: %s (%s)%s",
+        result.proposed,
+        result.status,
+        page_id,
+        result.reason,
+        blocked,
+    )
+    if result.status == "approved":
+        await share_links(state, result.page_id)
+    return {**asdict(result), "page_id": page_id}
+
+
+@broker.task(
+    task_name="curate_pending",
+    schedule=[{"cron": "45 * * * *", "schedule_id": "hourly-curator-sweep"}],
+)
+async def curate_pending_task(context: Annotated[Context, TaskiqDepends()]) -> dict:
+    """Queue needs_review pages the curator hasn't reviewed yet."""
+    if not settings.curator_enabled:
+        return {"queued": 0}
+    async with context.state.session_factory() as session:
+        page_ids = await uncurated_page_ids(session, CURATE_BATCH_SIZE)
+    for page_id in page_ids:
+        await curate_page_task.kiq(str(page_id))
+    if page_ids:
+        logger.info("curator sweep: queued %d pages", len(page_ids))
+    return {"queued": len(page_ids)}

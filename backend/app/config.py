@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     # it's there for comparisons like the load test.
     hop_queue_enabled: bool = True
 
+    # The curator agent reviews needs_review pages (app/curator). False leaves
+    # them all for a person. The limits cap what one review can cost.
+    curator_enabled: bool = True
+    curator_max_turns: int = 8  # model calls per review
+    curator_max_tool_calls: int = 6
+
     # Safety check (optional: without a key, pages can't be auto-approved)
     safe_browsing_api_key: str | None = None
 

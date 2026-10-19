@@ -94,6 +94,9 @@ class Page(Base):
         Vector(EMBEDDING_DIMENSIONS), deferred=True
     )
     enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When the curator agent last reviewed the page (None: not yet). A page
+    # that comes back to needs_review (e.g. its content changed) is reset.
+    curated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

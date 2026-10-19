@@ -1,0 +1,298 @@
+"""The curator's tools: read-only lookups the agent can ask for.
+
+None of them can change anything. The only way the agent affects a page is
+submit_decision, and even that goes through the guardrails in policy.py.
+Every result that contains text from the web is fenced, as in enrichment,
+so the model can tell data from instructions.
+"""
+
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
+
+from app.ingestion.extract import extract_article
+from app.ingestion.fetch import FetchError, RobotsDisallowedError, SafeFetcher
+from app.ingestion.network import HostNotFoundError, UnsafeUrlError
+from app.ingestion.pipeline import HTML_TYPES, MAX_PAGE_BYTES, MIN_WORDS
+from app.ingestion.safety import SafetyChecker, SafetyCheckError, SafetyResult
+from app.ingestion.simhash import from_signed, hamming_distance, simhash
+from app.ingestion.urls import site_of
+from app.models import Page
+
+SIMILAR_PAGES = 5
+SITE_EXAMPLES = 3
+LIVE_EXCERPT_CHARS = 1500
+
+
+class SubmitDecision(BaseModel):
+    """The agent's final answer. Checked by the guardrails before it's applied."""
+
+    decision: Literal["approve", "reject", "escalate"]
+    topics: list[str] = Field(default_factory=list, max_length=3)
+    quality: float = Field(ge=0, le=1)
+    reason: str = Field(min_length=1, max_length=300)
+
+
+def _function(name: str, description: str, parameters: dict[str, Any]) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        },
+    }
+
+
+NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
+
+# Written out by hand (not generated from the models) so every provider
+# gets the same simple JSON schema
+TOOL_SPECS = [
+    _function(
+        "site_history",
+        "How Hop has judged other pages from the same website: counts by "
+        "status and a few example titles.",
+        NO_ARGS,
+    ),
+    _function(
+        "similar_pages",
+        "The approved pages most similar to this one, with their topics. "
+        "Shows whether the page fits a topic and how it compares.",
+        NO_ARGS,
+    ),
+    _function(
+        "check_safety",
+        "Run the safety check again: Hop's domain blocklist and Google Safe "
+        "Browsing (if configured).",
+        NO_ARGS,
+    ),
+    _function(
+        "fetch_live_page",
+        "Fetch the page again now: whether it still loads, where it redirects, "
+        "how much its text changed since it was stored, and a short excerpt.",
+        NO_ARGS,
+    ),
+    _function(
+        "submit_decision",
+        "Your final decision. Call it exactly once, after gathering evidence.",
+        {
+            "type": "object",
+            "properties": {
+                "decision": {
+                    "type": "string",
+                    "enum": ["approve", "reject", "escalate"],
+                },
+                "topics": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Up to 3 topic slugs from the allowed list",
+                },
+                "quality": {
+                    "type": "number",
+                    "description": "0 to 1, as defined in your instructions",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "One or two sentences a person can check",
+                },
+            },
+            "required": ["decision", "topics", "quality", "reason"],
+            "additionalProperties": False,
+        },
+    ),
+]
+TOOL_NAMES = {spec["function"]["name"] for spec in TOOL_SPECS}
+
+
+@dataclass(frozen=True)
+class PageFacts:
+    """What the curator knows about the page under review, loaded once."""
+
+    id: uuid.UUID
+    url: str
+    title: str
+    summary: str | None
+    content: str
+    status_reason: str | None
+    quality_score: float | None
+    simhash: int | None
+    embedding: list[float] | None
+    topics: list[str] = field(default_factory=list)
+
+    @property
+    def site(self) -> str:
+        return site_of(self.url)
+
+    @classmethod
+    def from_page(cls, page: Page) -> "PageFacts":
+        return cls(
+            id=page.id,
+            url=page.url,
+            title=page.title,
+            summary=page.summary,
+            content=page.content or "",
+            status_reason=page.status_reason,
+            quality_score=page.quality_score,
+            simhash=page.simhash,
+            embedding=list(page.embedding) if page.embedding is not None else None,
+            topics=[topic.slug for topic in page.topics],
+        )
+
+
+def fence(tag: str, text: str) -> str:
+    """Mark untrusted text clearly. Closing tags inside it are neutralized,
+    so a page can't end the fence early and pretend to be instructions."""
+    cleaned = text.replace(f"</{tag}>", f"</ {tag}>")
+    return f"<{tag}>\n{cleaned}\n</{tag}>"
+
+
+class CuratorToolbox:
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        safety: SafetyChecker,
+        fetcher: SafeFetcher | None,
+        page: PageFacts,
+    ) -> None:
+        self.session_factory = session_factory
+        self.safety = safety
+        self.fetcher = fetcher
+        self.page = page
+        # The latest safety result, reused by the guardrails if the agent
+        # already asked for it (saves a second Safe Browsing call)
+        self.safety_result: SafetyResult | None = None
+
+    async def call(self, name: str, args: dict[str, Any]) -> str:
+        """Run one tool by name. Unknown names get an error message, not an exception."""
+        match name:
+            case "site_history":
+                return await self.site_history()
+            case "similar_pages":
+                return await self.similar_pages()
+            case "check_safety":
+                return await self.check_safety()
+            case "fetch_live_page":
+                return await self.fetch_live_page()
+        return f"Unknown tool {name!r}. Available: {', '.join(sorted(TOOL_NAMES))}."
+
+    async def site_history(self) -> str:
+        site = self.page.site
+        async with self.session_factory() as session:
+            counts = dict(
+                (
+                    await session.execute(
+                        select(Page.status, func.count())
+                        .where(Page.site == site, Page.id != self.page.id)
+                        .group_by(Page.status)
+                    )
+                ).all()
+            )
+            examples = []
+            for status in ("approved", "rejected"):
+                rows = await session.execute(
+                    select(Page.title, Page.status_reason)
+                    .where(Page.site == site, Page.status == status)
+                    .where(Page.id != self.page.id)
+                    .order_by(Page.created_at.desc())
+                    .limit(SITE_EXAMPLES)
+                )
+                for title, reason in rows:
+                    note = f" (reason: {reason})" if status == "rejected" else ""
+                    examples.append(f"{status}: {title}{note}")
+
+        summary = (
+            f"Other pages from {site}: {counts.get('approved', 0)} approved, "
+            f"{counts.get('rejected', 0)} rejected, "
+            f"{counts.get('needs_review', 0)} waiting for review, "
+            f"{counts.get('dead', 0)} dead, {counts.get('pending', 0)} pending."
+        )
+        if not examples:
+            return summary
+        return summary + "\n" + fence("untrusted_titles", "\n".join(examples))
+
+    async def similar_pages(self) -> str:
+        if self.page.embedding is None:
+            return "This page has no embedding, so similar pages can't be looked up."
+        distance = Page.embedding.cosine_distance(self.page.embedding)
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(Page, distance)
+                    .where(Page.status == "approved", Page.id != self.page.id)
+                    .where(Page.embedding.is_not(None))
+                    .order_by(distance)
+                    .limit(SIMILAR_PAGES)
+                    .options(selectinload(Page.topics))
+                )
+            ).all()
+        if not rows:
+            return "No approved pages with embeddings to compare with yet."
+        lines = [
+            f"{1 - d:.2f} similar: {page.title} "
+            f"[{', '.join(t.slug for t in page.topics) or 'no topic'}]"
+            for page, d in rows
+        ]
+        return "Most similar approved pages (1.00 = identical):\n" + fence(
+            "untrusted_titles", "\n".join(lines)
+        )
+
+    async def check_safety(self) -> str:
+        try:
+            result = await self.safety.check(self.page.url)
+        except SafetyCheckError as error:
+            return f"The safety check couldn't run right now ({error})."
+        self.safety_result = result
+        if not result.safe:
+            return f"UNSAFE: {result.reason or 'flagged'}."
+        if not result.checked:
+            return (
+                "Not on Hop's blocklist, but Safe Browsing isn't configured, "
+                "so the page can't be approved."
+            )
+        return "Safe: not on the blocklist, and Safe Browsing found no threats."
+
+    async def fetch_live_page(self) -> str:
+        if self.fetcher is None:
+            return "Live fetching isn't available here."
+        try:
+            fetched = await self.fetcher.get(self.page.url, max_bytes=MAX_PAGE_BYTES)
+        except RobotsDisallowedError:
+            return "robots.txt now blocks Hop from this page."
+        except UnsafeUrlError:
+            return "The page now points to a private address."
+        except HostNotFoundError:
+            return "The website's host name no longer exists."
+        except FetchError as error:
+            return f"The page couldn't be fetched ({error.reason})."
+
+        facts = [f"HTTP {fetched.status_code}"]
+        if site_of(fetched.url) != self.page.site:
+            facts.append(f"redirects to another site: {site_of(fetched.url)}")
+        if fetched.status_code >= 400:
+            return "; ".join(facts) + "."
+        content_type = (
+            fetched.headers.get("content-type", "").split(";")[0].strip().lower()
+        )
+        if content_type not in HTML_TYPES:
+            return "; ".join(facts + [f"not HTML ({content_type or 'unknown'})"]) + "."
+        article = extract_article(fetched.body, fetched.url)
+        if article is None or article.word_count < MIN_WORDS:
+            return "; ".join(facts + ["no readable article"]) + "."
+
+        facts.append(f"{article.word_count} words")
+        if self.page.simhash is not None:
+            changed = hamming_distance(
+                simhash(article.text), from_signed(self.page.simhash)
+            )
+            facts.append(f"text differs from the stored copy by {changed} of 64 bits")
+        return (
+            "; ".join(facts)
+            + ".\n"
+            + fence("page_content", article.text[:LIVE_EXCERPT_CHARS])
+        )

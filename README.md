@@ -2,7 +2,7 @@
 
 Hop is a discovery app: one click on the Hop button shows a page the user is likely to enjoy but would never have found.
 
-**Status:** in progress. Phases 1 (skeleton) and 2 (Hop MVP) are complete: users can sign up, pick interests, hop, and like pages. Phase 3 (ingestion pipeline) is complete: a background worker fetches, cleans, and deduplicates new pages, uses an LLM, embeddings, and a safety screen to approve, reject, or flag them for review, re-checks approved pages every 30 days to retire broken ones, and finds new pages by itself from RSS/Atom feeds and from the links inside approved pages. Phase 4 (recommendations) is in progress: a recommender (taste embeddings and Thompson sampling) now runs as an A/B test against random picks.
+**Status:** in progress. Phases 1 (skeleton) and 2 (Hop MVP) are complete: users can sign up, pick interests, hop, and like pages. Phase 3 (ingestion pipeline) is complete: a background worker fetches, cleans, and deduplicates new pages, uses an LLM, embeddings, and a safety screen to approve, reject, or flag them for review, re-checks approved pages every 30 days to retire broken ones, and finds new pages by itself from RSS/Atom feeds and from the links inside approved pages. Phase 4 (recommendations) is complete: a recommender (taste embeddings and Thompson sampling) runs as an A/B test against random picks, served from per-user Redis queues that cut p95 hop latency from 208 ms to 37 ms. Phase 5 (AI curator) is in progress: a LangGraph agent with read-only tools reviews the pages the automatic checks couldn't decide, behind code guardrails it can't override.
 
 [![CI](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml/badge.svg)](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml)
 
@@ -17,6 +17,7 @@ Hop is a discovery app: one click on the Hop button shows a page the user is lik
 | Background jobs | taskiq with Redis Streams |
 | Article extraction | trafilatura |
 | Enrichment | Gemini, OpenAI, or Ollama (with failover); Voyage AI embeddings; Google Safe Browsing |
+| Curator agent | LangGraph, with LangChain's OpenAI-compatible chat client |
 | Local email | Mailpit (catches all outgoing email) |
 | Local environment | Docker Compose |
 | CI | GitHub Actions |
@@ -103,6 +104,7 @@ The worker's log shows what happened to each URL. Each new page is then enriched
 | `make poll-feeds` | Check the feeds in `backend/app/ingestion/feeds.txt` now |
 | `make embed` | Add embeddings to approved pages that don't have one (needs `VOYAGE_API_KEY`) |
 | `make ab-report` | Compare liked rates: recommender vs. random picks |
+| `make curate` | Queue every `needs_review` page the curator agent hasn't reviewed yet (the worker must be running) |
 | `make loadtest` | Load test `POST /hop` in its own database and report latency (`make loadtest args="--no-queue"` to compare) |
 | `make test-db` | Create the test database (once) |
 | `make api` | Start the backend with reload |

@@ -102,6 +102,9 @@ def _retire(page: Page, now: datetime, status: str, reason: str) -> None:
     page.status_reason = reason
     page.last_checked_at = now
     page.next_check_at = None
+    if status == "needs_review":
+        # It changed since anyone approved it: the curator looks again
+        page.curated_at = None
 
 
 async def recheck_page(

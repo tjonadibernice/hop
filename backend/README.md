@@ -60,6 +60,8 @@ Settings are read from the root `.env`. Environment variables take priority.
 | `OLLAMA_BASE_URL` | No | | Third LLM provider, a local model, e.g. `http://localhost:11434/v1` (model `OLLAMA_MODEL`, default `llama3.2`) |
 | `VOYAGE_API_KEY` | No | | Embeddings (model `VOYAGE_MODEL`, default `voyage-4-lite`); without it, pages have no embedding |
 | `SAFE_BROWSING_API_KEY` | No | | Google Safe Browsing; without it, pages can't be auto-approved |
+| `CURATOR_ENABLED` | No | `true` | Let the curator agent review `needs_review` pages; `false` leaves them all for a person |
+| `CURATOR_MAX_TURNS` / `CURATOR_MAX_TOOL_CALLS` | No | `8` / `6` | Most model calls and tool lookups one review may use |
 
 At least one of `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `OLLAMA_BASE_URL` is needed for enrichment.
 
@@ -321,7 +323,7 @@ make scheduler      # terminal 2: queues the check every day at 03:00 UTC
 make check-links    # or run it right now
 ```
 
-The scheduler (taskiq's `TaskiqScheduler`) reads the `schedule` labels on the tasks: `poll_feeds` daily at 02:00 UTC, `check_links` daily at 03:00 UTC, and `enrich_pending` every hour at minute 15. Run only one scheduler; two would queue every check twice. The task finds up to 200 approved pages that are due (`next_check_at` has passed, or never checked), oldest first, and queues one `recheck_page` job each.
+The scheduler (taskiq's `TaskiqScheduler`) reads the `schedule` labels on the tasks: `poll_feeds` daily at 02:00 UTC, `check_links` daily at 03:00 UTC, `enrich_pending` every hour at minute 15, and `curate_pending` every hour at minute 45. Run only one scheduler; two would queue every check twice. The task finds up to 200 approved pages that are due (`next_check_at` has passed, or never checked), oldest first, and queues one `recheck_page` job each.
 
 | Result of the check | What happens |
 | --- | --- |
@@ -332,7 +334,47 @@ The scheduler (taskiq's `TaskiqScheduler`) reads the `schedule` labels on the ta
 | Now redirects to a different site (`www.` doesn't count) | `needs_review` |
 | Text changed by more than 24 of 64 SimHash bits | `needs_review` (for example, a parked domain) |
 
-Newly approved pages get their first check 30 days after enrichment. Hand-picked seed pages are fingerprinted on their first check. Hop only shows `approved` pages, so dead pages simply stop appearing.
+Newly approved pages get their first check 30 days after enrichment. Hand-picked seed pages are fingerprinted on their first check. Hop only shows `approved` pages, so dead pages simply stop appearing. A page sent to `needs_review` by a link check goes to the curator agent again, even if it reviewed the page before.
+
+### Curator agent
+
+Some pages can't be decided by the automatic rules: no confident topic, borderline quality, or a link check that found the page moved or changed. The curator agent (`app/curator/`) reviews them the way a careful editor would: it looks things up, then proposes **approve**, **reject**, or **escalate** (a person decides). It's built with [LangGraph](https://langchain-ai.github.io/langgraph/):
+
+```
+START -> agent -> tools  -> agent   (look something up, think again)
+               -> submit -> END     (a decision)
+               -> nudge  -> agent   (answered in prose: asked once to use a tool)
+```
+
+**Tools.** All read-only; the agent can't change anything directly.
+
+| Tool | What it returns |
+| --- | --- |
+| `site_history` | How Hop judged other pages from the same site: counts by status, a few titles |
+| `similar_pages` | The 5 nearest approved pages (pgvector), with their topics |
+| `check_safety` | The blocklist and Safe Browsing result |
+| `fetch_live_page` | Whether the page still loads, redirects to another site, or changed since it was stored (SimHash), plus a short excerpt |
+| `submit_decision` | The final answer: decision, up to 3 topics, quality 0–1, reason |
+
+**Guardrails** (`policy.py`) are plain code applied after the agent decides, so a page that talks the model into "approve" still can't get through:
+
+| Rule | Result |
+| --- | --- |
+| Safe Browsing or the blocklist says unsafe | `rejected`, whatever the agent proposed |
+| "approve" without a completed Safe Browsing check | `needs_review` (a person decides) |
+| "approve" without a known topic, or with quality below 0.6 | `needs_review` |
+| Turn limit (8 model calls) or no decision | `needs_review` |
+| "reject" / "escalate" | `rejected` / `needs_review` |
+
+**Prompt injection defenses.** Page text and anything from a tool that came from the web is wrapped in tags like `<page_content>`, and a closing tag inside the text is broken up so the page can't "end" the fence and pose as instructions. The system prompt says that text is data, and that a page trying to instruct the model is manipulative and should be rejected. The tools are read-only, and the guardrails decide.
+
+**Limits.** At most 8 model calls and 6 tool lookups per review (`CURATOR_MAX_TURNS`, `CURATOR_MAX_TOOL_CALLS`), plus LangGraph's own recursion limit as a backstop. Model calls go through the same `LLMRouter` as enrichment (`LLMRouter.run`), so they share its failover, pacing, daily caps, and 429 cooldowns. When every provider is busy, the page simply stays waiting.
+
+**Audit trail.** Every review adds a row to `curator_reviews`: what the agent proposed, the status Hop set, the guardrail that changed it (if any), topics, quality, provider, and every step (tool, arguments, the first 500 characters of the result). `pages.curated_at` records when the curator last looked; `needs_review` pages with a `curated_at` are the ones waiting for a person.
+
+**When it runs.** Enrichment and link checks queue `curate_page` as soon as they send a page to review. `curate_pending` (hourly, at minute 45) queues up to 20 pages that were missed, and `make curate` queues all of them now. A lock stops two workers from reviewing the same page, and if a person or a link check changes the page's status while the agent is thinking, their decision stands. An approved page then shares its links, like any other.
+
+Without `SAFE_BROWSING_API_KEY`, the curator can still reject and escalate, but it can never approve. LangChain sends nothing to LangSmith unless you set `LANGSMITH_TRACING=true` yourself.
 
 ### Where new pages come from
 
@@ -400,6 +442,13 @@ app/
 ├── ai/                  # AI service clients
 │   ├── llm.py           # JSON from chat models, with failover
 │   └── embeddings.py    # Voyage embeddings
+├── curator/             # The curator agent (LangGraph)
+│   ├── tools.py         # Read-only tools and submit_decision
+│   ├── prompts.py       # Instructions and the fenced page
+│   ├── model.py         # Tool-calling model with provider failover
+│   ├── graph.py         # The agent loop
+│   ├── policy.py        # Guardrails that decide the final status
+│   └── service.py       # One review, saved with its audit trail
 ├── ingestion/           # Ingestion pipeline
 │   ├── pipeline.py      # The steps for one URL, and retries
 │   ├── feeds.py         # RSS and Atom feeds
@@ -420,6 +469,7 @@ app/
 │   ├── base.py          # Base class and constraint naming convention
 │   ├── associations.py  # page_topics and user_interests link tables
 │   ├── interaction.py   # Views, likes, and dislikes
+│   ├── curator.py       # curator_reviews: the agent's audit trail
 │   ├── page.py
 │   ├── topic.py
 │   └── user.py
@@ -451,6 +501,7 @@ scripts/
 ├── check_embeddable.py  # Checks unchecked pages for iframe support
 ├── ab_report.py         # Compares the A/B groups
 ├── load_test.py         # Load test for POST /hop
+├── curate_pages.py      # Queues review pages for the curator
 ├── check_links.py       # Runs the link check now
 ├── embed_pages.py       # Embeds approved pages without an embedding
 ├── poll_feeds.py        # Checks the feeds now
@@ -465,6 +516,7 @@ tests/
 ├── test_embeds.py       # Iframe header rules
 ├── test_experiments.py  # A/B assignment, stats, z-test
 ├── test_hop_queue.py    # Queue refills, stale entries, refill requests
+├── test_curator.py      # Guardrails, the agent loop, tools, injection, wire format
 ├── factories.py         # Helpers that create users, pages, reactions
 ├── test_embeddings.py   # Voyage client
 ├── test_enrich.py       # Routing rules and enrichment

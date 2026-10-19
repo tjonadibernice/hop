@@ -17,7 +17,7 @@ Two optional limits per provider keep us inside its quota and our budget:
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -67,7 +67,7 @@ class AllProvidersFailedError(Exception):
         self.retry_after = retry_after
 
 
-def _retry_after(response: httpx.Response) -> int:
+def retry_after_seconds(response: httpx.Response) -> int:
     try:
         seconds = int(response.headers.get("retry-after", ""))
     except ValueError:
@@ -116,7 +116,7 @@ async def complete_json(
         raise ProviderError(f"{type(error).__name__}") from error
 
     if response.status_code == 429:
-        raise RateLimitedError(_retry_after(response))
+        raise RateLimitedError(retry_after_seconds(response))
     if response.status_code >= 400:
         raise ProviderError(f"HTTP {response.status_code}")
     try:
@@ -173,16 +173,16 @@ class LLMRouter:
             await self.redis.incr(key)
             await self.redis.expire(key, 2 * 24 * 60 * 60)
 
-    async def generate[T: BaseModel](
-        self,
-        *,
-        system: str,
-        user: str,
-        schema_name: str,
-        schema: dict[str, Any],
-        response_model: type[T],
-    ) -> tuple[T, str]:
-        """The first valid answer, and the name of the provider that gave it."""
+    async def run[R](
+        self, call: Callable[[ChatProvider], Awaitable[R]]
+    ) -> tuple[R, str]:
+        """Run `call` with the first provider that works; return its result and name.
+
+        Every caller gets the same rules: pacing, the daily cap, and cooldowns
+        after a 429. `call` raises RateLimitedError or ProviderError to move on
+        to the next provider. Used for structured JSON (generate) and by the
+        curator agent's tool-calling model.
+        """
         failures: list[str] = []
         waits: list[float] = []  # seconds until each waiting provider is free
         hard_failure = False
@@ -201,15 +201,7 @@ class LLMRouter:
                 )
             await self._count_call(provider)
             try:
-                data = await complete_json(
-                    self.client,
-                    provider,
-                    system=system,
-                    user=user,
-                    schema_name=schema_name,
-                    schema=schema,
-                )
-                return response_model.model_validate(data), provider.name
+                return await call(provider), provider.name
             except RateLimitedError as error:
                 await self.redis.set(
                     self._cooldown_key(provider), "1", ex=error.retry_after
@@ -219,15 +211,39 @@ class LLMRouter:
             except ProviderError as error:
                 failures.append(f"{provider.name}: {error}")
                 hard_failure = True
-            except ValidationError:
-                failures.append(f"{provider.name}: answer didn't match the schema")
-                hard_failure = True
             logger.warning("LLM provider failed: %s", failures[-1])
 
         retry_after = min(waits) if waits and not hard_failure else None
         raise AllProvidersFailedError(
             "; ".join(failures) or "no providers configured", retry_after
         )
+
+    async def generate[T: BaseModel](
+        self,
+        *,
+        system: str,
+        user: str,
+        schema_name: str,
+        schema: dict[str, Any],
+        response_model: type[T],
+    ) -> tuple[T, str]:
+        """The first valid answer, and the name of the provider that gave it."""
+
+        async def call(provider: ChatProvider) -> T:
+            data = await complete_json(
+                self.client,
+                provider,
+                system=system,
+                user=user,
+                schema_name=schema_name,
+                schema=schema,
+            )
+            try:
+                return response_model.model_validate(data)
+            except ValidationError as error:
+                raise ProviderError("answer didn't match the schema") from error
+
+        return await self.run(call)
 
 
 def providers_from_settings(settings: Settings) -> list[ChatProvider]:
