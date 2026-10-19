@@ -374,6 +374,8 @@ START -> agent -> tools  -> agent   (look something up, think again)
 
 **When it runs.** Enrichment and link checks queue `curate_page` as soon as they send a page to review. `curate_pending` (hourly, at minute 45) queues up to 20 pages that were missed, and `make curate` queues all of them now. A lock stops two workers from reviewing the same page, and if a person or a link check changes the page's status while the agent is thinking, their decision stands. An approved page then shares its links, like any other.
 
+The tool definitions use only the part of JSON Schema that Gemini accepts for tools (no `additionalProperties`, no empty objects); a test keeps it that way. When a provider refuses a request, the worker log shows its reason, for example `gemini: HTTP 400: ...`.
+
 Without `SAFE_BROWSING_API_KEY`, the curator can still reject and escalate, but it can never approve. LangChain sends nothing to LangSmith unless you set `LANGSMITH_TRACING=true` yourself.
 
 ### Where new pages come from

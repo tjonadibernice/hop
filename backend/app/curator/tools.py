@@ -38,45 +38,41 @@ class SubmitDecision(BaseModel):
     reason: str = Field(min_length=1, max_length=300)
 
 
-def _function(name: str, description: str, parameters: dict[str, Any]) -> dict:
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": parameters,
-        },
-    }
+def _function(
+    name: str, description: str, parameters: dict[str, Any] | None = None
+) -> dict:
+    function: dict[str, Any] = {"name": name, "description": description}
+    # A tool without arguments has no "parameters" at all: Gemini refuses an
+    # object schema with an empty "properties"
+    if parameters is not None:
+        function["parameters"] = parameters
+    return {"type": "function", "function": function}
 
 
-NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
-
-# Written out by hand (not generated from the models) so every provider
-# gets the same simple JSON schema
+# Written out by hand (not generated from the models) so every provider gets
+# the same simple schema. It sticks to the part of JSON Schema that Gemini
+# accepts for tools: no "additionalProperties", no "$ref", no empty objects.
+# submit_decision's arguments are validated by SubmitDecision anyway.
 TOOL_SPECS = [
     _function(
         "site_history",
         "How Hop has judged other pages from the same website: counts by "
         "status and a few example titles.",
-        NO_ARGS,
     ),
     _function(
         "similar_pages",
         "The approved pages most similar to this one, with their topics. "
         "Shows whether the page fits a topic and how it compares.",
-        NO_ARGS,
     ),
     _function(
         "check_safety",
         "Run the safety check again: Hop's domain blocklist and Google Safe "
         "Browsing (if configured).",
-        NO_ARGS,
     ),
     _function(
         "fetch_live_page",
         "Fetch the page again now: whether it still loads, where it redirects, "
         "how much its text changed since it was stored, and a short excerpt.",
-        NO_ARGS,
     ),
     _function(
         "submit_decision",
@@ -103,7 +99,6 @@ TOOL_SPECS = [
                 },
             },
             "required": ["decision", "topics", "quality", "reason"],
-            "additionalProperties": False,
         },
     ),
 ]

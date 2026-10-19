@@ -544,3 +544,42 @@ async def test_full_review_through_the_real_client(session_factory, redis):
     assert tool_reply["tool_call_id"] == "call_1"
     assert tool_reply["content"].startswith("Other pages from example.org")
     assert requests[0]["temperature"] == 0
+
+
+def _schema_keys(value) -> set[str]:
+    if isinstance(value, dict):
+        return set(value) | {k for v in value.values() for k in _schema_keys(v)}
+    if isinstance(value, list):
+        return {k for v in value for k in _schema_keys(v)}
+    return set()
+
+
+def test_tool_definitions_stay_within_what_gemini_accepts():
+    for spec in TOOL_SPECS:
+        parameters = spec["function"].get("parameters")
+        if parameters is None:
+            continue
+        assert parameters["properties"], "Gemini refuses empty object schemas"
+        assert not _schema_keys(parameters) & {"additionalProperties", "$ref", "$defs"}
+
+
+async def test_a_refused_request_keeps_the_providers_reason(redis):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "code": 400,
+                    "message": "Unknown name 'foo' at 'tools[0]'",
+                    "status": "INVALID_ARGUMENT",
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        router = LLMRouter(http, redis, [ChatProvider("gemini", "https://g.test", "m")])
+        model = RouterAgentModel(router, http, TOOL_SPECS)
+        with pytest.raises(AllProvidersFailedError) as caught:
+            await model.invoke([HumanMessage(content="hi")])
+
+    assert str(caught.value) == "gemini: HTTP 400: Unknown name 'foo' at 'tools[0]'"
