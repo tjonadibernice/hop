@@ -22,6 +22,7 @@ pages in the chosen topic are ranked by their quality score instead.
 import math
 import random
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -120,8 +121,12 @@ async def candidate_pages(
     topic_id: int,
     taste: list[float] | None,
     limit: int = CANDIDATES,
+    exclude: Collection[uuid.UUID] = (),
 ) -> list[Page]:
-    """Approved, unseen pages in the topic: closest to the taste, or best quality first."""
+    """Approved, unseen pages in the topic: closest to the taste, or best quality first.
+
+    exclude: pages to skip even though they're unseen (already picked or queued).
+    """
     seen = select(Interaction.page_id).where(Interaction.user_id == user_id)
     in_topic = select(page_topics.c.page_id).where(page_topics.c.topic_id == topic_id)
     query = (
@@ -132,6 +137,8 @@ async def candidate_pages(
         .options(selectinload(Page.topics))
         .limit(limit)
     )
+    if exclude:
+        query = query.where(Page.id.not_in(list(exclude)))
     if taste is not None:
         # <=> in SQL: cosine distance, served by the HNSW index
         query = query.where(Page.embedding.is_not(None)).order_by(
@@ -155,6 +162,25 @@ async def recommend(
     now: datetime,
 ) -> Page | None:
     """The next page for the user, or None if they've seen everything in their interests."""
+    picks = await recommend_many(session, user_id, rng, now, count=1)
+    return picks[0] if picks else None
+
+
+async def recommend_many(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    rng: random.Random,
+    now: datetime,
+    count: int,
+    exclude: Collection[uuid.UUID] = (),
+) -> list[Page]:
+    """Up to `count` different pages, picked one after another.
+
+    The expensive parts (topic counts and the taste vector) are computed once
+    and reused, so filling the hop queue (services/hop.py) costs much less than
+    `count` separate calls to recommend(). Each pick still draws its own topic
+    order, so a batch mixes topics the same way single hops would.
+    """
     topic_ids = list(
         await session.scalars(
             select(user_interests.c.topic_id).where(user_interests.c.user_id == user_id)
@@ -165,11 +191,24 @@ async def recommend(
     if await reaction_count(session, user_id) >= COLD_START_REACTIONS:
         taste = await taste_vector(session, user_id, now)
 
-    for topic_id in topic_order(counts, rng):
-        candidates = await candidate_pages(session, user_id, topic_id, taste)
-        if not candidates and taste is not None:
-            # Pages without embeddings yet (e.g. not backfilled) still count
-            candidates = await candidate_pages(session, user_id, topic_id, None)
-        if candidates:
-            return choose(candidates, rng)
-    return None
+    picked: list[Page] = []
+    skip = set(exclude)
+    for _ in range(count):
+        page = None
+        for topic_id in topic_order(counts, rng):
+            candidates = await candidate_pages(
+                session, user_id, topic_id, taste, exclude=skip
+            )
+            if not candidates and taste is not None:
+                # Pages without embeddings yet (e.g. not backfilled) still count
+                candidates = await candidate_pages(
+                    session, user_id, topic_id, None, exclude=skip
+                )
+            if candidates:
+                page = choose(candidates, rng)
+                break
+        if page is None:
+            break  # nothing left in any topic
+        picked.append(page)
+        skip.add(page.id)
+    return picked

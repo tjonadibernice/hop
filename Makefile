@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links poll-feeds embed ab-report check test-db
+.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links poll-feeds embed ab-report loadtest check test-db
 
 up:
 	docker compose up -d
@@ -53,6 +53,10 @@ embed:
 
 ab-report:
 	cd backend && uv run python -m scripts.ab_report
+
+# Options go in args, e.g.: make loadtest args="--no-queue --users 50"
+loadtest:
+	cd backend && uv run python -m scripts.load_test $(args)
 
 lint:
 	cd backend && uv run ruff check .

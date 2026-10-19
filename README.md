@@ -103,6 +103,7 @@ The worker's log shows what happened to each URL. Each new page is then enriched
 | `make poll-feeds` | Check the feeds in `backend/app/ingestion/feeds.txt` now |
 | `make embed` | Add embeddings to approved pages that don't have one (needs `VOYAGE_API_KEY`) |
 | `make ab-report` | Compare liked rates: recommender vs. random picks |
+| `make loadtest` | Load test `POST /hop` in its own database and report latency (`make loadtest args="--no-queue"` to compare) |
 | `make test-db` | Create the test database (once) |
 | `make api` | Start the backend with reload |
 | `make web` | Start the frontend development server |

@@ -788,6 +788,41 @@ input[type="password"] {
   border: none;
 }
 
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* "Picked for you" (recommender) or "Random find" (the A/B baseline) */
+.pick-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 12px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--on-primary);
+  background: var(--primary-fill);
+  border: var(--line-w) solid var(--line);
+  border-radius: 999px;
+}
+
+.pick-badge.random {
+  color: var(--text);
+  background: var(--card-bg);
+}
+
+[data-theme="dark"] .pick-badge {
+  border-color: transparent;
+}
+
+[data-theme="dark"] .pick-badge.random {
+  border-color: var(--line);
+}
+
 .summary {
   max-width: 760px;
   margin: 0;

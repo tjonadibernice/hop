@@ -12,6 +12,9 @@ Tasks:
   ingestion/feeds.txt, which queues new posts for ingestion.
 - After a page is approved (or passes a link check for the first time), its
   article links are queued for ingestion too (see ingestion/discovery.py).
+- refill_hop_queue: pick pages ahead of time for one user's hop queue (see
+  services/hop_queue.py). The API queues it when a user's queue runs low.
+  It has its own stream, so a backlog of ingestion jobs can't delay it.
 
 Run the worker with:     uv run taskiq worker app.worker:broker
 Run the scheduler with:  uv run taskiq scheduler app.worker:scheduler
@@ -43,6 +46,8 @@ from app.ingestion.network import HostNotFoundError, UnsafeUrlError, ensure_publ
 from app.ingestion.pipeline import Outcome, ingest_with_retries
 from app.ingestion.safety import SafetyChecker, load_blocklist
 from app.models import EMBEDDING_DIMENSIONS
+from app.services import hop as hop_service
+from app.services import hop_queue
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +60,14 @@ ENRICH_LOCK_SECONDS = 30 * 60
 SWEEP_SKIPS_NEWER_THAN = timedelta(minutes=10)
 SWEEP_BATCH_SIZE = 100
 
+REFILL_STREAM = "hop:refill"
+
 # Redis Streams keep a message until a worker acknowledges it, so a job isn't
-# lost if a worker crashes halfway through
+# lost if a worker crashes halfway through. Workers read both streams.
 broker = RedisStreamBroker(
-    url=settings.redis_url, queue_name="hop:ingest"
+    url=settings.redis_url,
+    queue_name="hop:ingest",
+    additional_streams={REFILL_STREAM: ">"},
 ).with_result_backend(
     RedisAsyncResultBackend(settings.redis_url, result_ex_time=RESULT_TTL_SECONDS)
 )
@@ -269,3 +278,19 @@ async def poll_feed_task(
         await ingest_url_task.kiq(url, source="feed")
     logger.info("feed %s: %d new posts", feed_url, len(urls))
     return {"feed": feed_url, "queued": len(urls)}
+
+
+@broker.task(task_name="refill_hop_queue", queue_name=REFILL_STREAM)
+async def refill_hop_queue_task(
+    user_id: str, context: Annotated[Context, TaskiqDepends()]
+) -> dict[str, Any]:
+    """Top up one user's hop queue with pages picked ahead of time."""
+    state = context.state
+    user = uuid.UUID(user_id)
+    try:
+        async with state.session_factory() as session:
+            added = await hop_service.refill_queue(session, state.redis, user)
+    finally:
+        # Let the next low queue ask again
+        await hop_queue.release_refill(state.redis, user)
+    return {"user_id": user_id, "added": added}

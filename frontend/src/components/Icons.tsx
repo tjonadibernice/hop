@@ -101,3 +101,23 @@ export function SunIcon({ size }: IconProps) {
     </Svg>
   );
 }
+
+export function StarIcon({ size = 14 }: IconProps) {
+  return (
+    <Svg size={size} filled strokeWidth={1.5}>
+      <path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.5 1.3 6.6L12 17.2l-5.9 3.3 1.3-6.6-4.9-4.5 6.6-.8z" />
+    </Svg>
+  );
+}
+
+export function ShuffleIcon({ size = 14 }: IconProps) {
+  return (
+    <Svg size={size} strokeWidth={2.4}>
+      <path d="M16 3h5v5" />
+      <path d="M4 20 21 3" />
+      <path d="M21 16v5h-5" />
+      <path d="M15 15l6 6" />
+      <path d="M4 4l5 5" />
+    </Svg>
+  );
+}

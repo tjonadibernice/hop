@@ -9,6 +9,7 @@ from app.config import settings
 from app.email import EmailSender
 from app.models import User
 from app.services import sessions
+from app.services.hop_queue import Refiller
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -24,9 +25,14 @@ def get_redis(request: Request) -> Redis:
     return request.app.state.redis
 
 
+def get_refiller(request: Request) -> Refiller:
+    return request.app.state.refiller
+
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 RedisDep = Annotated[Redis, Depends(get_redis)]
 EmailSenderDep = Annotated[EmailSender, Depends(get_email_sender)]
+RefillerDep = Annotated[Refiller, Depends(get_refiller)]
 
 
 async def get_current_user(

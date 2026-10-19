@@ -31,3 +31,9 @@ export type Page = {
 };
 
 export type Reaction = "like" | "dislike";
+
+/** How a page was picked: by the recommender, or at random (the A/B baseline). */
+export type Strategy = "recommender" | "random";
+
+/** What POST /hop returns: a page plus how it was picked. */
+export type Hop = Page & { strategy: Strategy };

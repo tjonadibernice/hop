@@ -38,7 +38,7 @@ Settings are read from the root `.env`. Environment variables take priority.
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | Yes | | Postgres connection for the app |
-| `REDIS_URL` | Yes | | Redis connection (sessions and verification tokens) |
+| `REDIS_URL` | Yes | | Redis connection (sessions, verification tokens, hop queues, and worker jobs) |
 | `TEST_DATABASE_URL` | For tests | | Separate Postgres database used by the tests |
 | `SMTP_HOST` | No | `localhost` | Email server (Mailpit locally) |
 | `SMTP_PORT` | No | `1025` | Email server port |
@@ -48,6 +48,7 @@ Settings are read from the root `.env`. Environment variables take priority.
 | `SESSION_TTL_SECONDS` | No | `604800` (7 days) | How long a login lasts |
 | `COOKIE_SECURE` | No | `false` | Send the session cookie over HTTPS only; set to `true` in production |
 | `RECOMMENDER_PERCENT` | No | `50` | Share of users (0–100) who get the recommender instead of random picks; the A/B split |
+| `HOP_QUEUE_ENABLED` | No | `true` | Serve hops from each user's precomputed queue in Redis; `false` picks every page while the user waits |
 | `CRAWLER_USER_AGENT` | No | `HopBot/0.1 (+https://github.com/tjonadibernice/hop)` | How the crawler identifies itself to websites |
 | `CRAWL_DELAY_SECONDS` | No | `1.0` | Minimum time between two requests to the same website |
 | `CRAWL_ALLOW_PRIVATE_HOSTS` | No | `false` | Lets the crawler fetch localhost and private addresses. Only for local testing |
@@ -86,7 +87,7 @@ uv run uvicorn app.main:app --reload
 | `GET /topics` | No | All topics | `200` with the list |
 | `GET /me/interests` | Yes | The user's chosen topics | `200` with the list |
 | `PUT /me/interests` | Yes | Replace the user's interests (3–15 topic IDs, no duplicates) | `200`, `400` for unknown topics, or `422` |
-| `POST /hop` | Yes | A random unseen page from the user's interests; records a view | `200` with the page, `409` without interests, or `404` when everything has been seen |
+| `POST /hop` | Yes | The next unseen page from the user's interests (recommender or random, see below); records a view | `200` with the page and its `strategy`, `409` without interests, or `404` when everything has been seen |
 | `PUT /pages/{page_id}/reaction` | Yes | Like or dislike a page Hop has shown the user (`{"reaction": "like"}` or `"dislike"`) | `200`, `404` if the page wasn't shown to the user, or `422` |
 | `GET /me/likes` | Yes | Pages the user currently likes, newest first | `200` with the list |
 
@@ -130,6 +131,51 @@ Users choose 3–15 topics as interests. Each `POST /hop` picks an **approved** 
 
 - `POST` is used instead of `GET` because each hop changes data (it records a view), and `GET` requests must not change anything.
 - Two strategies run side by side as an A/B test (`app/services/experiments.py`): **random** (`ORDER BY random()`, the baseline) and the **recommender** (below).
+- The response includes `strategy` (`"recommender"` or `"random"`), and the frontend shows it as **Picked for you** or **Random find**. Note that the label is part of what the A/B test measures: users see which kind of pick they got.
+- Every response has a `Server-Timing: app;dur=12.3` header with the time the app spent on it (visible in the browser's Network tab). `POST /hop` also sends `X-Hop-Source: queue` or `live` (next section).
+
+### The hop queue
+
+Picking a page with the recommender takes several queries and some math (the taste vector), about 30 ms with nobody else around and much more when many users hop at once. So pages are picked **ahead of time** (`app/services/hop_queue.py`):
+
+```
+POST /hop ──► pop "hop:queue:{user}" (Redis list) ──► re-check the page ──► record the view
+                 │ empty?                                 │ still approved, unseen,
+                 ▼                                        │ and in the user's interests?
+            pick live (as before)                         ▼
+                                                  fewer than 4 left? ──► queue a refill job
+                                                                          (worker picks up to 10)
+```
+
+- **Refills run in the worker** (`refill_hop_queue` in `app/worker.py`) on their own Redis stream, `hop:refill`, so a backlog of ingestion jobs can't hold them up. A lock (`SET NX`, 60 seconds) makes sure only one refill per user is queued at a time; the worker releases it when it finishes.
+- **Batch picking:** `recommend_many()` computes the topic counts and the taste vector once for the whole batch, then picks pages one by one (each with its own Thompson draw), skipping pages already picked or queued.
+- **Stale entries are skipped, not trusted:** a queued page may have been rejected, retired, shown in another tab, or picked for old interests. Each popped entry is checked with one query; stale ones are dropped. Changing interests also clears the queue.
+- **Each entry remembers its strategy,** so the view is recorded with the strategy that actually picked the page.
+- **Without a worker**, nothing breaks: the queue stays empty and every hop is picked live, just slower. Queues expire after 24 hours without use.
+
+### Load test
+
+`make loadtest` measures `POST /hop` under load. It never touches your dev data: it uses its own database (`hop_loadtest`, created on the same Postgres server) and Redis database 15, and empties both on every run.
+
+1. Seeds 3,000 approved pages with random embeddings and 30 users with 3 interests and 12 reactions each (so the recommender uses the taste vector, its slowest path).
+2. Starts the API (uvicorn) and a worker against them.
+3. Each simulated user hops, likes or dislikes 30% of pages, waits 0.2–1 second, and hops again, for 30 seconds.
+4. Reports throughput, p50/p95/p99 latency, how many hops came from the queue, and time spent inside the app (from `Server-Timing`). Exits with code 1 if p95 is over 100 ms.
+
+```bash
+make loadtest                              # with the queue
+make loadtest args="--no-queue"            # every page picked live
+make loadtest args="--users 60 --api-workers 2"
+```
+
+Results on a small 2-vCPU cloud machine that ran everything (Postgres, Redis, API, worker, and the load generator), with 30 users:
+
+| | Hops/s | p50 | p95 | p99 | Result |
+| --- | --- | --- | --- | --- | --- |
+| Queue on | 46 | 19 ms | 70 ms | 476 ms | Pass |
+| Queue off | 41 | 53 ms | 319 ms | 665 ms | Fail |
+
+With the queue, a hop is a few fast lookups by primary key, so latency stays flat as load grows; without it, every hop runs the recommender while the user waits. The rare slow p99 requests come from the machine being shared: the load generator and the worker compete with the API for the same 2 CPUs. Your numbers will differ; run it on your machine. To remove the test database afterwards: `DROP DATABASE hop_loadtest;`
 
 ### Recommendations
 
@@ -346,7 +392,8 @@ app/
 ├── config.py            # Settings loaded from the root .env
 ├── db.py                # Postgres engine and session factory
 ├── cache.py             # Redis client
-├── dependencies.py      # Shared dependencies (database, Redis, email, current user)
+├── dependencies.py      # Shared dependencies (database, Redis, email, refills, current user)
+├── timing.py            # Server-Timing header middleware
 ├── worker.py            # Background worker and scheduler (taskiq)
 ├── email.py             # Email sending (SMTP)
 ├── security.py          # Password hashing (Argon2) and token helpers
@@ -384,7 +431,8 @@ app/
 ├── services/            # Business logic
 │   ├── auth.py          # Sign-up, email verification, and login
 │   ├── embeds.py        # Whether a page allows being shown in an iframe
-│   ├── hop.py           # Picking the next page (A/B: random or recommender)
+│   ├── hop.py           # Picking the next page (A/B: random or recommender), queue refills
+│   ├── hop_queue.py     # Each user's queue of ready pages in Redis
 │   ├── recommender.py   # Thompson sampling and taste vectors
 │   ├── experiments.py   # A/B assignment and the liked-rate report
 │   ├── reactions.py     # Likes, dislikes, and the likes list
@@ -402,6 +450,7 @@ migrations/
 scripts/
 ├── check_embeddable.py  # Checks unchecked pages for iframe support
 ├── ab_report.py         # Compares the A/B groups
+├── load_test.py         # Load test for POST /hop
 ├── check_links.py       # Runs the link check now
 ├── embed_pages.py       # Embeds approved pages without an embedding
 ├── poll_feeds.py        # Checks the feeds now
@@ -415,6 +464,7 @@ tests/
 ├── test_auth.py         # Sign-up and email verification
 ├── test_embeds.py       # Iframe header rules
 ├── test_experiments.py  # A/B assignment, stats, z-test
+├── test_hop_queue.py    # Queue refills, stale entries, refill requests
 ├── factories.py         # Helpers that create users, pages, reactions
 ├── test_embeddings.py   # Voyage client
 ├── test_enrich.py       # Routing rules and enrichment

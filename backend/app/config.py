@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # random picks. 0 turns the recommender off; 100 gives it to everyone.
     recommender_percent: int = 50
 
+    # Serve hops from each user's precomputed Redis queue (filled by the
+    # worker). False picks every page while the user waits, which is slower;
+    # it's there for comparisons like the load test.
+    hop_queue_enabled: bool = True
+
     # Safety check (optional: without a key, pages can't be auto-approved)
     safe_browsing_api_key: str | None = None
 

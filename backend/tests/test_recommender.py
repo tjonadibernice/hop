@@ -206,13 +206,15 @@ async def test_views_record_the_strategy(session_factory, topics, percent, strat
     await make_page(session_factory, topics[0])
 
     async with session_factory() as session:
-        page = await next_page(session, user, recommender_percent=percent)
+        hop = await next_page(session, user, recommender_percent=percent)
     async with session_factory() as session:
         view = await session.scalar(
             select(Interaction).where(
-                Interaction.page_id == page.id, Interaction.kind == "view"
+                Interaction.page_id == hop.page.id, Interaction.kind == "view"
             )
         )
+    assert hop.strategy == strategy
+    assert hop.source == "live"
     assert view.strategy == strategy
 
 

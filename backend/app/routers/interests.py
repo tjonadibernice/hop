@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException
 
-from app.dependencies import CurrentUserDep, SessionDep
+from app.dependencies import CurrentUserDep, RedisDep, SessionDep
 from app.schemas.topics import InterestsResponse, InterestsUpdate, TopicResponse
+from app.services import hop_queue
 from app.services import topics as topics_service
 
 router = APIRouter(prefix="/me/interests", tags=["interests"])
@@ -20,10 +21,12 @@ async def get_interests(user: CurrentUserDep, session: SessionDep) -> InterestsR
 
 @router.put("")
 async def set_interests(
-    body: InterestsUpdate, user: CurrentUserDep, session: SessionDep
+    body: InterestsUpdate, user: CurrentUserDep, session: SessionDep, redis: RedisDep
 ) -> InterestsResponse:
     try:
         topics = await topics_service.set_interests(session, user.id, body.topic_ids)
     except topics_service.UnknownTopicError:
         raise HTTPException(status_code=400, detail="Unknown topic.") from None
+    # Queued pages were picked for the old interests
+    await hop_queue.clear(redis, user.id)
     return _response(topics)

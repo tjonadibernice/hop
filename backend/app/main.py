@@ -1,3 +1,4 @@
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,6 +8,13 @@ from app.config import settings
 from app.db import create_db_engine, create_session_factory
 from app.email import SmtpEmailSender
 from app.routers import auth, health, hop, interests, reactions, topics
+from app.timing import ServerTimingMiddleware
+from app.worker import broker, refill_hop_queue_task
+
+
+async def queue_refill(user_id: uuid.UUID) -> None:
+    """Ask the worker to refill the user's hop queue."""
+    await refill_hop_queue_task.kiq(str(user_id))
 
 
 @asynccontextmanager
@@ -20,15 +28,24 @@ async def lifespan(app: FastAPI):
         settings.smtp_port,
         settings.mail_from,
     )
+    # The API only sends jobs to the worker; it never runs them
+    await broker.startup()
+    app.state.refiller = queue_refill
 
     yield  # the app serves requests while paused here
 
     # Shutdown: close connections cleanly
+    await broker.shutdown()
     await app.state.redis.aclose()
     await app.state.engine.dispose()
 
 
 app = FastAPI(title="Hop API", lifespan=lifespan)
+
+
+app.add_middleware(ServerTimingMiddleware)
+
+
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(topics.router)

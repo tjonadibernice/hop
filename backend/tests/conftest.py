@@ -1,4 +1,5 @@
 import re
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
-from app.dependencies import get_email_sender, get_redis, get_session
+from app.dependencies import get_email_sender, get_redis, get_refiller, get_session
 from app.email import Email
 from app.main import app
 from app.models import Topic
@@ -66,11 +67,27 @@ def redis() -> fakeredis.FakeAsyncRedis:
     return fakeredis.FakeAsyncRedis(decode_responses=True)
 
 
+class FakeRefiller:
+    """Records refill requests instead of queuing worker jobs."""
+
+    def __init__(self) -> None:
+        self.requested: list[uuid.UUID] = []
+
+    async def __call__(self, user_id: uuid.UUID) -> None:
+        self.requested.append(user_id)
+
+
+@pytest.fixture
+def refiller() -> FakeRefiller:
+    return FakeRefiller()
+
+
 @pytest.fixture
 async def client(
     session_factory: async_sessionmaker[AsyncSession],
     email_sender: FakeEmailSender,
     redis: fakeredis.FakeAsyncRedis,
+    refiller: FakeRefiller,
 ) -> AsyncIterator[AsyncClient]:
     async def override_get_session() -> AsyncIterator[AsyncSession]:
         async with session_factory() as session:
@@ -79,6 +96,7 @@ async def client(
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_email_sender] = lambda: email_sender
     app.dependency_overrides[get_redis] = lambda: redis
+    app.dependency_overrides[get_refiller] = lambda: refiller
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

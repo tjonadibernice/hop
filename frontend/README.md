@@ -61,11 +61,11 @@ Fonts load from Google Fonts. Text colors meet WCAG AA contrast in both modes, e
 
 Nothing happens until the user presses **Hop**, which calls `POST /hop`. Every hop is recorded as a view, so pages never load on their own. The **Dislike**, **Hop**, and **Like** buttons sit in a dock that floats at the bottom of the screen, so they're always in the same place, even on a phone.
 
-| API response      | What the screen shows                                                                                                              |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `200` with a page | A card with the site, title, summary, and topic chips (colored by the first topic), an "Open in new tab" link, and the page itself |
-| `409`             | "Pick your interests first", with a link to `/interests`                                                                           |
-| `404`             | "You've seen it all (for now)", with a link to add more interests                                                                  |
+| API response      | What the screen shows                                                                                                                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `200` with a page | A card with the site, a **Picked for you** or **Random find** badge (from the response's `strategy`), title, summary, and topic chips (colored by the first topic), an "Open in new tab" link, and the page itself |
+| `409`             | "Pick your interests first", with a link to `/interests`                                                                                                                                                           |
+| `404`             | "You've seen it all (for now)", with a link to add more interests                                                                                                                                                  |
 
 Before the first hop, the screen shows a welcome message with the user's topics as stickers.
 

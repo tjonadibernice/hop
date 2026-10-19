@@ -5,11 +5,13 @@ import {
   ExternalIcon,
   HeartIcon,
   HopArrow,
+  ShuffleIcon,
+  StarIcon,
   ThumbDownIcon,
 } from "../components/Icons";
 import TopicChips from "../components/TopicChips";
 import { toneFor } from "../topicTones";
-import type { Interests, Page, Reaction, Topic } from "../types";
+import type { Hop, Interests, Reaction, Topic } from "../types";
 
 type Status = "idle" | "hopping" | "ready" | "no-interests" | "all-seen";
 
@@ -24,7 +26,7 @@ const SANDBOX =
 
 export default function HopPage() {
   const [status, setStatus] = useState<Status>("idle");
-  const [page, setPage] = useState<Page | null>(null);
+  const [page, setPage] = useState<Hop | null>(null);
   const [reaction, setReaction] = useState<Reaction | null>(null);
   const [reacting, setReacting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +35,7 @@ export default function HopPage() {
     setError(null);
     setStatus("hopping");
     try {
-      const next = await api<Page>("/hop", { method: "POST" });
+      const next = await api<Hop>("/hop", { method: "POST" });
       setPage(next);
       setReaction(null);
       setStatus("ready");
@@ -187,7 +189,7 @@ function Welcome() {
   );
 }
 
-function PageView({ page }: { page: Page }) {
+function PageView({ page }: { page: Hop }) {
   const site = new URL(page.url).hostname;
   // The first topic colors the header card
   const tone = page.topics.length > 0 ? toneFor(page.topics[0]) : "lilac";
@@ -196,7 +198,22 @@ function PageView({ page }: { page: Page }) {
     <article className="hop-result">
       <header className={`page-header tone-${tone}`}>
         <div className="page-header-text">
-          <p className="site-badge">{site}</p>
+          <div className="badges">
+            <p className="site-badge">{site}</p>
+            <p className={`pick-badge ${page.strategy}`}>
+              {page.strategy === "recommender" ? (
+                <>
+                  <StarIcon />
+                  Picked for you
+                </>
+              ) : (
+                <>
+                  <ShuffleIcon />
+                  Random find
+                </>
+              )}
+            </p>
+          </div>
           <h1>{page.title}</h1>
           {page.summary && <p className="summary">{page.summary}</p>}
           <TopicChips topics={page.topics} />

@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -14,3 +15,9 @@ class PageResponse(BaseModel):
     summary: str | None
     embeddable: bool | None
     topics: list[TopicResponse]
+
+
+class HopResponse(PageResponse):
+    # How the page was picked: by the recommender, or at random (the A/B
+    # baseline). The frontend shows "Picked for you" or "Random find".
+    strategy: Literal["recommender", "random"]
