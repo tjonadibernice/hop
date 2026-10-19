@@ -168,14 +168,14 @@ make loadtest args="--no-queue"            # every page picked live
 make loadtest args="--users 60 --api-workers 2"
 ```
 
-Results on a small 2-vCPU cloud machine that ran everything (Postgres, Redis, API, worker, and the load generator), with 30 users:
+Results on a laptop (WSL 2), with everything on one machine (Postgres, Redis, API, worker, and the load generator) and 30 users:
 
-| | Hops/s | p50 | p95 | p99 | Result |
-| --- | --- | --- | --- | --- | --- |
-| Queue on | 46 | 19 ms | 70 ms | 476 ms | Pass |
-| Queue off | 41 | 53 ms | 319 ms | 665 ms | Fail |
+| | Hops/s | p50 | p95 | p99 | Inside the app (p95) | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| Queue on | 46.6 | 17 ms | 37 ms | 350 ms | 32 ms | Pass |
+| Queue off | 42.7 | 58 ms | 208 ms | 489 ms | 200 ms | Fail |
 
-With the queue, a hop is a few fast lookups by primary key, so latency stays flat as load grows; without it, every hop runs the recommender while the user waits. The rare slow p99 requests come from the machine being shared: the load generator and the worker compete with the API for the same 2 CPUs. Your numbers will differ; run it on your machine. To remove the test database afterwards: `DROP DATABASE hop_loadtest;`
+The queue cuts p95 by about 5.5 times. Without it, almost all of a hop's time is the recommender running while the user waits ("inside the app" is nearly the whole latency); with it, a hop is a few fast lookups by primary key. The rare slow p99 requests come from the machine being shared: the load generator and the worker compete with the API for the same CPU. On a small 2-vCPU cloud machine the same test gave p95 70 ms with the queue and 319 ms without. To remove the test database afterwards: `DROP DATABASE hop_loadtest;`
 
 ### Recommendations
 
