@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
+import { removePage } from "../admin";
 import { ApiError, api, messageFor } from "../api";
+import { useAuth } from "../auth/AuthContext";
+import ActionDialog from "../components/ActionDialog";
 import {
   ExternalIcon,
   HeartIcon,
@@ -111,7 +114,7 @@ export default function HopPage() {
         </div>
       )}
 
-      {page && <PageView page={page} />}
+      {page && <PageView page={page} onRemoved={hop} />}
 
       {/* The controls float at the bottom, where a thumb or mouse can always
           find them without scrolling */}
@@ -189,7 +192,9 @@ function Welcome() {
   );
 }
 
-function PageView({ page }: { page: Hop }) {
+function PageView({ page, onRemoved }: { page: Hop; onRemoved: () => void }) {
+  const { user } = useAuth();
+  const [removing, setRemoving] = useState(false);
   const site = new URL(page.url).hostname;
   // The first topic colors the header card
   const tone = page.topics.length > 0 ? toneFor(page.topics[0]) : "lilac";
@@ -218,16 +223,40 @@ function PageView({ page }: { page: Hop }) {
           {page.summary && <p className="summary">{page.summary}</p>}
           <TopicChips topics={page.topics} />
         </div>
-        <a
-          className="button secondary"
-          href={page.url}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Open in new tab
-          <ExternalIcon />
-        </a>
+        <div className="page-header-actions">
+          <a
+            className="button secondary"
+            href={page.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open in new tab
+            <ExternalIcon />
+          </a>
+          {/* Admins can take a bad page out of Hop without leaving it */}
+          {user?.is_admin && (
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => setRemoving(true)}
+            >
+              Remove from Hop
+            </button>
+          )}
+        </div>
       </header>
+      {removing && (
+        <ActionDialog
+          title="Remove from Hop"
+          description="The page disappears from Hop and from everyone's likes right away. Its history is kept, and Hop won't fetch it again."
+          confirmLabel="Remove and hop on"
+          onConfirm={async (reason) => {
+            await removePage(page.id, reason);
+            onRemoved();
+          }}
+          onClose={() => setRemoving(false)}
+        />
+      )}
 
       {page.embeddable === false ? (
         <div className="embed-blocked">

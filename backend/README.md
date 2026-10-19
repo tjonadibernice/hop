@@ -60,6 +60,7 @@ Settings are read from the root `.env`. Environment variables take priority.
 | `OLLAMA_BASE_URL` | No | | Third LLM provider, a local model, e.g. `http://localhost:11434/v1` (model `OLLAMA_MODEL`, default `llama3.2`) |
 | `VOYAGE_API_KEY` | No | | Embeddings (model `VOYAGE_MODEL`, default `voyage-4-lite`); without it, pages have no embedding |
 | `SAFE_BROWSING_API_KEY` | No | | Google Safe Browsing; without it, pages can't be auto-approved |
+| `ADMIN_EMAILS` | No | none | Comma-separated emails of the people who may use the review screen and remove pages |
 | `CURATOR_ENABLED` | No | `true` | Let the curator agent review `needs_review` pages; `false` leaves them all for a person |
 | `CURATOR_MAX_TURNS` / `CURATOR_MAX_TOOL_CALLS` | No | `8` / `6` | Most model calls and tool lookups one review may use |
 
@@ -85,13 +86,20 @@ uv run uvicorn app.main:app --reload
 | `POST /auth/verify-email` | No | Confirm an email with the token from the sign-up email | `200`, or `400` if the token is invalid, used, or expired |
 | `POST /auth/login` | No | Log in with email and password; sets the session cookie | `200` with the user, or `401` |
 | `POST /auth/logout` | No | End the current session and clear the cookie | Always `204` |
-| `GET /auth/me` | Yes | The logged-in user | `200` with the user, or `401` |
+| `GET /auth/me` | Yes | The logged-in user, with `is_admin` | `200` with the user, or `401` |
 | `GET /topics` | No | All topics | `200` with the list |
 | `GET /me/interests` | Yes | The user's chosen topics | `200` with the list |
 | `PUT /me/interests` | Yes | Replace the user's interests (3–15 topic IDs, no duplicates) | `200`, `400` for unknown topics, or `422` |
 | `POST /hop` | Yes | The next unseen page from the user's interests (recommender or random, see below); records a view | `200` with the page and its `strategy`, `409` without interests, or `404` when everything has been seen |
 | `PUT /pages/{page_id}/reaction` | Yes | Like or dislike a page Hop has shown the user (`{"reaction": "like"}` or `"dislike"`) | `200`, `404` if the page wasn't shown to the user, or `422` |
-| `GET /me/likes` | Yes | Pages the user currently likes, newest first | `200` with the list |
+| `GET /me/likes` | Yes | Pages the user currently likes, newest first (removed pages left out) | `200` with the list |
+| `GET /admin/review?show=escalated\|all` | Admin | Pages waiting for a person (`escalated`: the curator handed them over), with the curator's latest review | `200` with the list |
+| `GET /admin/pages?q=...` | Admin | Find any page by URL or title (20 at most) | `200` with the list |
+| `GET /admin/pages/{page_id}` | Admin | A page with its text excerpt, every curator review, and the history of human actions | `200`, or `404` |
+| `POST /admin/pages/{page_id}/approve` | Admin | Put a `needs_review` or `rejected` page live with 1–3 topics (`{"topics": [...], "reason": "..."}`) | `200`, `400` for unknown topics, `409` if not allowed |
+| `POST /admin/pages/{page_id}/reject` | Admin | Turn down a `needs_review` page (`{"reason": "..."}`) | `200`, or `409` |
+| `POST /admin/pages/{page_id}/remove` | Admin | Take any page out of Hop ("Remove from Hop") | `200`, or `409` if already out |
+| `POST /admin/pages/{page_id}/purge` | Admin | Erase a page's content for good (`{"reason": "...", "confirm_url": "<the exact URL>"}`) | `200`, or `409` if the URL doesn't match |
 
 ## Sign-up flow
 
@@ -378,6 +386,21 @@ The tool definitions use only the part of JSON Schema that Gemini accepts for to
 
 Without `SAFE_BROWSING_API_KEY`, the curator can still reject and escalate, but it can never approve. LangChain sends nothing to LangSmith unless you set `LANGSMITH_TRACING=true` yourself.
 
+### Review queue and removing pages
+
+People have the last word. The admin endpoints (`app/routers/admin.py`, rules in `app/services/review.py`) are for the emails listed in `ADMIN_EMAILS`; everyone else gets `403`. `/auth/me` returns `is_admin` so the frontend can show the Review screen, but the server checks again on every call.
+
+| Action | Allowed from | What happens |
+| --- | --- | --- |
+| Approve | `needs_review`, `rejected` | Live with the 1–3 topics the admin chose; a person may overrule the curator and the rules |
+| Reject | `needs_review` | Turned down |
+| Remove from Hop | any status except `rejected` | Out of Hop right away, and out of everyone's likes. The row and its history stay, so the crawler treats the URL as known and never adds it again |
+| Purge | any page not purged yet | For takedowns: the title, text, summary, embedding, links, topics, and the curator's tool excerpts are erased. The URL and SimHash fingerprint stay as a tombstone, so neither the page nor a near-copy of it can come back. The admin must type the page's exact URL |
+
+Every action adds a row to `review_actions`: who (`actor_email`), what, the status before and after, the reason, the topics, and when. Changes lock the page row (`SELECT ... FOR UPDATE`), so two admins, or an admin and the curator, can't change a page at the same moment; if the curator finishes after a person decided, the person's decision stands. Queued hops skip a removed page because every queued entry is re-checked before it's served.
+
+Hard `DELETE` isn't offered on purpose: a deleted URL can be crawled back in from a feed or a link, and deleting a page would also delete its likes and views, which the recommender and the A/B report rely on.
+
 ### Where new pages come from
 
 | Source | How | `pages.source` |
@@ -472,6 +495,7 @@ app/
 │   ├── associations.py  # page_topics and user_interests link tables
 │   ├── interaction.py   # Views, likes, and dislikes
 │   ├── curator.py       # curator_reviews: the agent's audit trail
+│   ├── review.py        # review_actions: what people did, and why
 │   ├── page.py
 │   ├── topic.py
 │   └── user.py
@@ -488,9 +512,11 @@ app/
 │   ├── recommender.py   # Thompson sampling and taste vectors
 │   ├── experiments.py   # A/B assignment and the liked-rate report
 │   ├── reactions.py     # Likes, dislikes, and the likes list
+│   ├── review.py        # Admin actions: approve, reject, remove, purge
 │   ├── sessions.py      # Session tokens in Redis
 │   └── topics.py        # Topics and interests
 └── routers/             # Endpoints
+    ├── admin.py         # The review screen's endpoints (admins only)
     ├── auth.py
     ├── health.py
     ├── hop.py
@@ -519,6 +545,7 @@ tests/
 ├── test_experiments.py  # A/B assignment, stats, z-test
 ├── test_hop_queue.py    # Queue refills, stale entries, refill requests
 ├── test_curator.py      # Guardrails, the agent loop, tools, injection, wire format
+├── test_admin.py        # Admin access, the queue, approve/reject/remove/purge
 ├── factories.py         # Helpers that create users, pages, reactions
 ├── test_embeddings.py   # Voyage client
 ├── test_enrich.py       # Routing rules and enrichment

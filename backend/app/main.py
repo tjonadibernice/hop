@@ -7,7 +7,7 @@ from app.cache import create_redis
 from app.config import settings
 from app.db import create_db_engine, create_session_factory
 from app.email import SmtpEmailSender
-from app.routers import auth, health, hop, interests, reactions, topics
+from app.routers import admin, auth, health, hop, interests, reactions, topics
 from app.timing import ServerTimingMiddleware
 from app.worker import broker, refill_hop_queue_task
 
@@ -52,3 +52,4 @@ app.include_router(topics.router)
 app.include_router(interests.router)
 app.include_router(hop.router)
 app.include_router(reactions.router)
+app.include_router(admin.router)

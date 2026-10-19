@@ -31,6 +31,7 @@ export default function Layout() {
               </NavLink>
               <NavLink to="/likes">Likes</NavLink>
               <NavLink to="/interests">Interests</NavLink>
+              {user.is_admin && <NavLink to="/review">Review</NavLink>}
             </nav>
           )}
 

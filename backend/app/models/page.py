@@ -97,6 +97,9 @@ class Page(Base):
     # When the curator agent last reviewed the page (None: not yet). A page
     # that comes back to needs_review (e.g. its content changed) is reset.
     curated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When an admin purged the page: its text, summary, and embedding were
+    # erased, and only this row (a tombstone) is kept so it isn't crawled again
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

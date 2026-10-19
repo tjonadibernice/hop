@@ -70,6 +70,8 @@ async def liked_pages(session: AsyncSession, user_id: uuid.UUID) -> Sequence[Pag
         select(Page)
         .join(latest, latest.c.page_id == Page.id)
         .where(latest.c.kind == "like")
+        # Pages an admin removed or purged disappear from everyone's likes
+        .where(Page.status != "rejected")
         .order_by(latest.c.created_at.desc())
         .options(selectinload(Page.topics))
     )

@@ -57,3 +57,13 @@ async def get_current_user(
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+
+async def get_admin_user(user: CurrentUserDep) -> User:
+    """The logged-in user, if their email is in ADMIN_EMAILS. Responds 403 otherwise."""
+    if not settings.is_admin(user.email):
+        raise HTTPException(status_code=403, detail="Admins only.")
+    return user
+
+
+AdminUserDep = Annotated[User, Depends(get_admin_user)]

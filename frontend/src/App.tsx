@@ -7,6 +7,7 @@ import InterestsPage from "./pages/InterestsPage";
 import LikesPage from "./pages/LikesPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
+import ReviewPage from "./pages/ReviewPage";
 import VerifyEmailPage from "./pages/VerifyEmailPage";
 
 function App() {
@@ -36,6 +37,14 @@ function App() {
               element={
                 <RequireAuth>
                   <LikesPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="review"
+              element={
+                <RequireAuth>
+                  <ReviewPage />
                 </RequireAuth>
               }
             />

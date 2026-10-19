@@ -33,6 +33,7 @@ Open http://localhost:5173.
 | `/login`                  | No    | Log in; new users go to `/interests` next                                           |
 | `/signup`                 | No    | Create an account; shows "Check your email"                                         |
 | `/verify-email?token=...` | No    | Opened from the sign-up email; confirms the account when the user clicks the button |
+| `/review`                 | Admin | The review queue: the curator's reasoning, then approve, reject, remove, or purge   |
 
 Pages that need a login are wrapped in `RequireAuth`, which sends logged-out visitors to `/login` and back afterward. This only affects what the page shows; the backend enforces the real access rules.
 
@@ -89,6 +90,20 @@ The iframe is locked down:
 
 Log in, Sign up, and Confirm email share `AuthShell`: a short pitch on one side and the form card on the other.
 
+## Review (admins only)
+
+Users whose email is in the backend's `ADMIN_EMAILS` see a **Review** link (`user.is_admin` from `GET /auth/me`). Hiding the link isn't security: every `/admin/...` call is checked again by the server, which answers `403` to anyone else.
+
+- **The list** shows the pages the curator handed to a person ("Waiting for you"), or everything under review. The search box finds any page by URL or title, including live ones.
+- **The detail panel** shows the page's summary and status, the curator's review (what it proposed, which guardrail blocked it, its reason, quality, and provider), every tool call it made with the result, and the stored text.
+- **Actions:**
+  - **Approve:** the topic boxes start with the curator's choice; pick 1–3.
+  - **Reject** and **Remove from Hop:** each asks for a reason in `ActionDialog`, a native `<dialog>` that traps focus and closes with Escape.
+  - **Purge:** red, and it stays disabled until you type the page's exact URL. The server checks the typed URL too.
+- **History** lists every human action on the page: who, when, and why.
+
+Admins also get a small **Remove from Hop** button on the Hop screen, which removes the current page and hops on.
+
 ## How the frontend reaches the API
 
 In development, Vite **proxies** requests that start with `/api` to the backend, so the browser only talks to one origin and CORS isn't needed. It also means the session cookie is stored for `localhost:5173` and sent with every API request automatically.
@@ -122,6 +137,7 @@ src/
 ├── main.tsx                  # Entry point
 ├── App.tsx                   # Routes
 ├── api.ts                    # API calls and error messages
+├── admin.ts                  # Review screen calls (admins only)
 ├── types.ts                  # Shapes of API responses
 ├── index.css                 # Styles and the light and dark theme variables
 ├── theme.ts                  # Night mode: pick, save, and apply the theme
@@ -134,6 +150,7 @@ src/
 │   ├── Layout.tsx            # Header, navigation, and footer
 │   ├── ThemeToggle.tsx       # The night mode button
 │   ├── AuthShell.tsx         # Shared frame for the login and sign-up pages
+│   ├── ActionDialog.tsx      # Asks for a reason (and a typed confirmation) before an admin action
 │   ├── Icons.tsx             # Inline SVG icons
 │   ├── HealthStatus.tsx      # Shows API, Postgres, and Redis status
 │   └── TopicChips.tsx        # A page's topics as colored labels
@@ -142,6 +159,7 @@ src/
     ├── InterestsPage.tsx
     ├── LikesPage.tsx
     ├── LoginPage.tsx
+    ├── ReviewPage.tsx        # The review queue and admin actions
     ├── SignupPage.tsx
     └── VerifyEmailPage.tsx
 ```

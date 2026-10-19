@@ -63,6 +63,14 @@ class Settings(BaseSettings):
     curator_max_turns: int = 8  # model calls per review
     curator_max_tool_calls: int = 6
 
+    # Emails of the people who may use the review screen and remove pages,
+    # separated by commas. Empty: nobody (the admin endpoints answer 403).
+    admin_emails: str = ""
+
+    def is_admin(self, email: str) -> bool:
+        admins = {e.strip().lower() for e in self.admin_emails.split(",") if e.strip()}
+        return email.strip().lower() in admins
+
     # Safety check (optional: without a key, pages can't be auto-approved)
     safe_browsing_api_key: str | None = None
 

@@ -4,6 +4,8 @@ export type User = {
   id: string;
   email: string;
   created_at: string;
+  /** Can use the review screen. The server checks again on every admin call. */
+  is_admin: boolean;
 };
 
 export type Topic = {
@@ -37,3 +39,61 @@ export type Strategy = "recommender" | "random";
 
 /** What POST /hop returns: a page plus how it was picked. */
 export type Hop = Page & { strategy: Strategy };
+
+/* --- The review screen (admins only) --- */
+
+export type PageStatus =
+  "pending" | "approved" | "rejected" | "needs_review" | "dead";
+
+export type CuratorStep = {
+  tool: string;
+  args: Record<string, unknown>;
+  result: string;
+};
+
+export type CuratorReview = {
+  id: number;
+  proposed: "approve" | "reject" | "escalate";
+  outcome: "approved" | "rejected" | "needs_review";
+  reason: string;
+  /** The guardrail that overrode the agent, if any. */
+  blocked_by: string | null;
+  topics: string[];
+  quality: number | null;
+  provider: string | null;
+  steps: CuratorStep[];
+  created_at: string;
+};
+
+export type ReviewAction = {
+  id: number;
+  actor_email: string;
+  action: "approve" | "reject" | "remove" | "purge";
+  from_status: PageStatus;
+  to_status: PageStatus;
+  reason: string | null;
+  topics: string[];
+  created_at: string;
+};
+
+export type AdminPage = {
+  id: string;
+  url: string;
+  site: string | null;
+  title: string;
+  status: PageStatus;
+  status_reason: string | null;
+  quality_score: number | null;
+  topics: Topic[];
+  created_at: string;
+  curated_at: string | null;
+  purged_at: string | null;
+  latest_review: CuratorReview | null;
+};
+
+export type AdminPageDetail = AdminPage & {
+  summary: string | null;
+  excerpt: string | null;
+  reviews: CuratorReview[];
+  actions: ReviewAction[];
+};
