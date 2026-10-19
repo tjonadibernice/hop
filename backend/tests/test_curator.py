@@ -583,3 +583,56 @@ async def test_a_refused_request_keeps_the_providers_reason(redis):
             await model.invoke([HumanMessage(content="hi")])
 
     assert str(caught.value) == "gemini: HTTP 400: Unknown name 'foo' at 'tools[0]'"
+
+
+def completion_with_signature(tool_name: str, args: dict, signature: str) -> dict:
+    data = completion(tool_name, args)
+    call = data["choices"][0]["message"]["tool_calls"][0]
+    call["extra_content"] = {"google": {"thought_signature": signature}}
+    return data
+
+
+@pytest.mark.parametrize(("provider", "kept"), [("gemini", True), ("openai", False)])
+async def test_gemini_thought_signatures_go_back_with_the_history(
+    session_factory, redis, provider, kept
+):
+    page = await make_page(session_factory)
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return httpx.Response(
+                200, json=completion_with_signature("site_history", {}, "sig-123")
+            )
+        return httpx.Response(
+            200,
+            json=completion(
+                "submit_decision",
+                {
+                    "decision": "escalate",
+                    "topics": [],
+                    "quality": 0.5,
+                    "reason": "Unsure.",
+                },
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        router = LLMRouter(
+            http, redis, [ChatProvider(provider, "https://llm.test/v1", "m", "k")]
+        )
+        curator = services(RouterAgentModel(router, http, TOOL_SPECS))
+        result = await curate_page(session_factory, curator, page.id)
+
+    assert result.status == "needs_review"
+    assistant = requests[1]["messages"][2]
+    assert assistant["role"] == "assistant"
+    assert "tool_call_extra_content" not in assistant  # our bookkeeping stays local
+    call_sent = assistant["tool_calls"][0]
+    if kept:
+        assert call_sent["extra_content"] == {
+            "google": {"thought_signature": "sig-123"}
+        }
+    else:
+        assert "extra_content" not in call_sent

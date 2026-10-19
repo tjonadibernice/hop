@@ -9,7 +9,9 @@ from typing import Any, Protocol
 
 import httpx
 import openai
+from langchain_core.language_models import LanguageModelInput
 from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.outputs import ChatResult
 from langchain_core.runnables import Runnable
 from langchain_openai import ChatOpenAI
 
@@ -35,6 +37,58 @@ def _reason(error: openai.APIStatusError) -> str:
     return " ".join(text.split())[:ERROR_DETAIL_CHARS]
 
 
+EXTRA_CONTENT_KEY = "tool_call_extra_content"
+
+
+class ToolCallExtrasChatOpenAI(ChatOpenAI):
+    """ChatOpenAI that keeps each tool call's `extra_content` across turns.
+
+    Gemini's thinking models attach a "thought signature" to every tool call
+    (tool_calls[i].extra_content.google.thought_signature) and refuse the
+    next request (HTTP 400) unless it comes back unchanged with the history.
+    ChatOpenAI drops fields it doesn't know, so this subclass stores them on
+    the AIMessage when the answer arrives and puts them back on the matching
+    tool call when the history is sent again.
+    """
+
+    def _create_chat_result(
+        self, response: Any, generation_info: dict | None = None
+    ) -> ChatResult:
+        result = super()._create_chat_result(response, generation_info)
+        data = response if isinstance(response, dict) else response.model_dump()
+        for generation, choice in zip(
+            result.generations, data.get("choices") or [], strict=False
+        ):
+            calls = (choice.get("message") or {}).get("tool_calls") or []
+            extras = {
+                call["id"]: call["extra_content"]
+                for call in calls
+                if call.get("id") and call.get("extra_content")
+            }
+            if extras:
+                generation.message.additional_kwargs[EXTRA_CONTENT_KEY] = extras
+        return result
+
+    def _get_request_payload(
+        self,
+        input_: LanguageModelInput,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict:
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        extras: dict[str, Any] = {}
+        for message in self._convert_input(input_).to_messages():
+            if isinstance(message, AIMessage):
+                extras.update(message.additional_kwargs.get(EXTRA_CONTENT_KEY, {}))
+        for message in payload.get("messages", []):
+            message.pop(EXTRA_CONTENT_KEY, None)
+            for call in message.get("tool_calls") or []:
+                if call.get("id") in extras:
+                    call["extra_content"] = extras[call["id"]]
+        return payload
+
+
 class AgentModel(Protocol):
     async def invoke(self, messages: list[AnyMessage]) -> tuple[AIMessage, str]:
         """The model's next message, and the name of the provider that wrote it."""
@@ -55,7 +109,11 @@ class RouterAgentModel:
 
     def _model(self, provider: ChatProvider) -> Runnable:
         if provider.name not in self._models:
-            chat = ChatOpenAI(
+            # Only Gemini sends (and needs back) extra_content on tool calls
+            model_class = (
+                ToolCallExtrasChatOpenAI if provider.name == "gemini" else ChatOpenAI
+            )
+            chat = model_class(
                 model=provider.model,
                 # Ollama ignores the key, but the client insists on one
                 api_key=provider.api_key or "not-needed",
