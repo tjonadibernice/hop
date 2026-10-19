@@ -122,4 +122,4 @@ Run `make check` before pushing. CI runs the same checks on every push to `main`
 ## More details
 
 - [Backend README](backend/README.md): API setup, endpoints, sign-up and login, hopping, iframe checks, the ingestion pipeline, migrations, tests
-- [Frontend README](frontend/README.md): pages, the Hop screen, login state, API proxy, scripts
+- [Frontend README](frontend/README.md): pages, light and night themes, the Hop screen, login state, API proxy, scripts

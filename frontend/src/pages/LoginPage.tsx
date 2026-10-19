@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router";
 import { api, messageFor } from "../api";
+import AuthShell from "../components/AuthShell";
 import { useAuth } from "../auth/AuthContext";
 import type { Interests } from "../types";
 
@@ -38,7 +39,7 @@ export default function LoginPage() {
   }
 
   return (
-    <section className="card">
+    <AuthShell>
       <h1>Log in</h1>
       <form onSubmit={handleSubmit} className="form">
         <label>
@@ -73,6 +74,6 @@ export default function LoginPage() {
       <p>
         New to Hop? <Link to="/signup">Sign up</Link>
       </p>
-    </section>
+    </AuthShell>
   );
 }

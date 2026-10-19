@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, messageFor } from "../api";
+import AuthShell from "../components/AuthShell";
 import type { Message } from "../types";
 
 type Status = "ready" | "verifying" | "verified" | "failed";
@@ -29,29 +30,29 @@ export default function VerifyEmailPage() {
 
   if (!token) {
     return (
-      <section className="card">
+      <AuthShell>
         <h1>Invalid link</h1>
         <p>
           This link is missing its token. Open the link from your email again.
         </p>
-      </section>
+      </AuthShell>
     );
   }
 
   if (status === "verified") {
     return (
-      <section className="card">
+      <AuthShell>
         <h1>Email confirmed</h1>
         <p>Your account is ready.</p>
         <Link to="/login" className="button">
           Log in
         </Link>
-      </section>
+      </AuthShell>
     );
   }
 
   return (
-    <section className="card">
+    <AuthShell>
       <h1>Confirm your email</h1>
       <p>Click the button to finish creating your Hop account.</p>
       {status === "failed" && (
@@ -67,6 +68,6 @@ export default function VerifyEmailPage() {
       >
         {status === "verifying" ? "Confirming…" : "Confirm my email"}
       </button>
-    </section>
+    </AuthShell>
   );
 }

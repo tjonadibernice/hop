@@ -51,11 +51,7 @@ export default function HealthStatus() {
   if (state.kind === "loaded") {
     return (
       <div>
-        <p
-          style={{
-            color: state.data.status === "ok" ? "green" : "red",
-          }}
-        >
+        <p className={state.data.status === "ok" ? "status-ok" : "status-bad"}>
           Overall status: {state.data.status}
         </p>
         <ul>

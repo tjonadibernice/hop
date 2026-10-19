@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { api, messageFor } from "../api";
+import AuthShell from "../components/AuthShell";
 import type { Message } from "../types";
 
 export default function SignupPage() {
@@ -29,18 +30,18 @@ export default function SignupPage() {
 
   if (done) {
     return (
-      <section className="card">
+      <AuthShell>
         <h1>Check your email</h1>
         <p>
           We sent a message to <strong>{email}</strong>. Open the link inside
           within 24 hours to finish signing up.
         </p>
-      </section>
+      </AuthShell>
     );
   }
 
   return (
-    <section className="card">
+    <AuthShell>
       <h1>Sign up</h1>
       <form onSubmit={handleSubmit} className="form">
         <label>
@@ -78,6 +79,6 @@ export default function SignupPage() {
       <p>
         Already have an account? <Link to="/login">Log in</Link>
       </p>
-    </section>
+    </AuthShell>
   );
 }

@@ -1,8 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { ApiError, api, messageFor } from "../api";
+import {
+  ExternalIcon,
+  HeartIcon,
+  HopArrow,
+  ThumbDownIcon,
+} from "../components/Icons";
 import TopicChips from "../components/TopicChips";
-import type { Page, Reaction } from "../types";
+import { toneFor } from "../topicTones";
+import type { Interests, Page, Reaction, Topic } from "../types";
 
 type Status = "idle" | "hopping" | "ready" | "no-interests" | "all-seen";
 
@@ -69,93 +76,151 @@ export default function HopPage() {
 
   return (
     <section className="hop-page">
-      <div className="hop-bar">
-        <button
-          type="button"
-          className="hop-button"
-          onClick={hop}
-          disabled={busy}
-        >
-          {status === "hopping" ? "Hopping…" : page ? "Hop again" : "Hop"}
-        </button>
-
-        {page && (
-          <div className="reactions" role="group" aria-label="Rate this page">
-            <button
-              type="button"
-              className="reaction"
-              aria-pressed={reaction === "like"}
-              onClick={() => react("like")}
-              disabled={busy}
-            >
-              Like
-            </button>
-            <button
-              type="button"
-              className="reaction"
-              aria-pressed={reaction === "dislike"}
-              onClick={() => react("dislike")}
-              disabled={busy}
-            >
-              Dislike
-            </button>
-          </div>
-        )}
-      </div>
-
       {error && status !== "all-seen" && (
         <p className="error" role="alert">
           {error}
         </p>
       )}
 
-      {status === "idle" && !page && (
-        <div className="card">
-          <h1>Ready to explore?</h1>
-          <p>Press Hop to land on a random page from your interests.</p>
-        </div>
-      )}
+      {status === "idle" && !page && <Welcome />}
 
       {status === "no-interests" && (
-        <div className="card">
+        <div className="empty-state">
           <h1>Pick your interests first</h1>
-          <p>
-            Hop needs at least 3 topics to choose from.{" "}
-            <Link to="/interests">Choose your interests</Link>
-          </p>
+          <p>Hop needs at least 3 topics to choose from.</p>
+          <Link to="/interests" className="button">
+            Choose your interests
+          </Link>
         </div>
       )}
 
       {status === "all-seen" && (
-        <div className="card">
-          <h1>You've seen it all</h1>
+        <div className="empty-state">
+          <div className="dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <h1>You've seen it all (for now)</h1>
           <p>{error}</p>
-          <Link to="/interests">Add more interests</Link>
+          <Link to="/interests" className="button">
+            Add more interests
+          </Link>
         </div>
       )}
 
       {page && <PageView page={page} />}
+
+      {/* The controls float at the bottom, where a thumb or mouse can always
+          find them without scrolling */}
+      <div className="dock-area">
+        <div className="dock" role="toolbar" aria-label="Hop controls">
+          {page && (
+            <button
+              type="button"
+              className="dock-reaction dislike"
+              aria-label="Dislike"
+              aria-pressed={reaction === "dislike"}
+              onClick={() => react("dislike")}
+              disabled={busy}
+            >
+              <ThumbDownIcon size={22} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="hop-button"
+            onClick={hop}
+            disabled={busy}
+          >
+            <HopArrow />
+            {status === "hopping" ? "Hopping…" : page ? "Hop again" : "Hop!"}
+          </button>
+          {page && (
+            <button
+              type="button"
+              className="dock-reaction like"
+              aria-label="Like"
+              aria-pressed={reaction === "like"}
+              onClick={() => react("like")}
+              disabled={busy}
+            >
+              <HeartIcon size={22} filled={reaction === "like"} />
+            </button>
+          )}
+        </div>
+      </div>
     </section>
+  );
+}
+
+/** The first screen: a big promise and the user's topics as stickers. */
+function Welcome() {
+  const [topics, setTopics] = useState<Topic[]>([]);
+
+  useEffect(() => {
+    // Only decoration, so a failure here just means no stickers
+    api<Interests>("/me/interests")
+      .then((interests) => setTopics(interests.topics))
+      .catch(() => {});
+  }, []);
+
+  return (
+    <div className="welcome">
+      {topics.length > 0 && (
+        <ul className="stickers" aria-label="Your topics">
+          {topics.slice(0, 5).map((topic) => (
+            <li key={topic.id} className={`sticker tone-${toneFor(topic)}`}>
+              {topic.name}
+            </li>
+          ))}
+        </ul>
+      )}
+      <h1>
+        One click. <span className="highlight">One good page.</span>
+      </h1>
+      <p>
+        Press Hop to land somewhere new. Like or dislike what you find, and Hop
+        learns what to show you next.
+      </p>
+    </div>
   );
 }
 
 function PageView({ page }: { page: Page }) {
   const site = new URL(page.url).hostname;
+  // The first topic colors the header card
+  const tone = page.topics.length > 0 ? toneFor(page.topics[0]) : "lilac";
 
   return (
     <article className="hop-result">
-      <header className="page-header">
-        <h1>{page.title}</h1>
-        <TopicChips topics={page.topics} />
-        {page.summary && <p className="summary">{page.summary}</p>}
-        <a href={page.url} target="_blank" rel="noopener noreferrer">
-          Open in new tab ↗
+      <header className={`page-header tone-${tone}`}>
+        <div className="page-header-text">
+          <p className="site-badge">{site}</p>
+          <h1>{page.title}</h1>
+          {page.summary && <p className="summary">{page.summary}</p>}
+          <TopicChips topics={page.topics} />
+        </div>
+        <a
+          className="button secondary"
+          href={page.url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open in new tab
+          <ExternalIcon />
         </a>
       </header>
 
       {page.embeddable === false ? (
-        <div className="card embed-blocked">
-          <p>{site} doesn't allow other sites to show its pages.</p>
+        <div className="embed-blocked">
+          <div>
+            <h2>This one opens in its own tab</h2>
+            <p>
+              {site} doesn't let other sites show its pages, so Hop can't
+              display it here. The summary above tells you what you'll find.
+            </p>
+          </div>
           <a
             className="button"
             href={page.url}
@@ -163,6 +228,7 @@ function PageView({ page }: { page: Page }) {
             rel="noopener noreferrer"
           >
             Read it on {site}
+            <ExternalIcon />
           </a>
         </div>
       ) : (
@@ -172,15 +238,17 @@ function PageView({ page }: { page: Page }) {
               If the page stays blank, open it in a new tab.
             </p>
           )}
-          {/* key: a new iframe for every page, so the old one never flashes */}
-          <iframe
-            key={page.id}
-            className="page-frame"
-            src={page.url}
-            title={page.title}
-            sandbox={SANDBOX}
-            referrerPolicy="no-referrer"
-          />
+          <div className="frame-ring">
+            {/* key: a new iframe for every page, so the old one never flashes */}
+            <iframe
+              key={page.id}
+              className="page-frame"
+              src={page.url}
+              title={page.title}
+              sandbox={SANDBOX}
+              referrerPolicy="no-referrer"
+            />
+          </div>
         </>
       )}
     </article>
