@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links poll-feeds embed ab-report loadtest curate eval-curator check test-db
+.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links poll-feeds embed ab-report loadtest curate eval-curator image integration check test-db
 
 up:
 	docker compose up -d
@@ -84,6 +84,21 @@ format-check:
 	cd frontend && npx prettier --check .
 
 check: lint format-check test build
+
+# The API as a container image (backend/Dockerfile)
+image:
+	docker build -t hop-api backend
+
+# Build and start the API container next to the services, prepare its own
+# database (hop_it), then run the end-to-end tests in backend/integration/
+integration:
+	docker compose exec db sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tc "SELECT 1 FROM pg_database WHERE datname = '\''hop_it'\''" | grep -q 1 || createdb -U "$$POSTGRES_USER" hop_it'
+	docker compose exec redis redis-cli -n 14 FLUSHDB
+	docker compose --profile app up -d --build --wait api
+	docker compose exec api alembic upgrade head
+	docker compose exec api python -m scripts.seed_pages
+	cd backend && API_URL=http://127.0.0.1:8001 MAILPIT_URL=http://127.0.0.1:8025 uv run pytest integration -v
+	docker compose --profile app stop api
 
 test-db:
 	docker compose exec db sh -c 'createdb -U "$$POSTGRES_USER" hop_test'

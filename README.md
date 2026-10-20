@@ -2,7 +2,7 @@
 
 Hop is a discovery app: one click on the Hop button shows a page the user is likely to enjoy but would never have found.
 
-**Status:** in progress. Phases 1 (skeleton) and 2 (Hop MVP) are complete: users can sign up, pick interests, hop, and like pages. Phase 3 (ingestion pipeline) is complete: a background worker fetches, cleans, and deduplicates new pages, uses an LLM, embeddings, and a safety screen to approve, reject, or flag them for review, re-checks approved pages every 30 days to retire broken ones, and finds new pages by itself from RSS/Atom feeds and from the links inside approved pages. Phase 4 (recommendations) is complete: a recommender (taste embeddings and Thompson sampling) runs as an A/B test against random picks, served from per-user Redis queues that cut p95 hop latency from 208 ms to 37 ms. Phase 5 (AI curator) is complete: a LangGraph agent with read-only tools reviews the pages the automatic checks couldn't decide, behind code guardrails it can't override, and admins decide the rest on a review screen where they can also remove or purge any page. A labeled evaluation set of 33 pages measures the agent: the first run scored 91% accuracy but let one manipulative page through, which led to a code-level injection check; the second run scored 91% with zero harmful approvals. Injection tests run in CI on every push. Phase 6 (hardening) is in progress: sign-up, login, and email confirmation are rate limited, and the crawler connects only to the address it checked, which closes DNS rebinding.
+**Status:** in progress. Phases 1 (skeleton) and 2 (Hop MVP) are complete: users can sign up, pick interests, hop, and like pages. Phase 3 (ingestion pipeline) is complete: a background worker fetches, cleans, and deduplicates new pages, uses an LLM, embeddings, and a safety screen to approve, reject, or flag them for review, re-checks approved pages every 30 days to retire broken ones, and finds new pages by itself from RSS/Atom feeds and from the links inside approved pages. Phase 4 (recommendations) is complete: a recommender (taste embeddings and Thompson sampling) runs as an A/B test against random picks, served from per-user Redis queues that cut p95 hop latency from 208 ms to 37 ms. Phase 5 (AI curator) is complete: a LangGraph agent with read-only tools reviews the pages the automatic checks couldn't decide, behind code guardrails it can't override, and admins decide the rest on a review screen where they can also remove or purge any page. A labeled evaluation set of 33 pages measures the agent: the first run scored 91% accuracy but let one manipulative page through, which led to a code-level injection check; the second run scored 91% with zero harmful approvals. Injection tests run in CI on every push. Phase 6 (hardening) is in progress: sign-up, login, and email confirmation are rate limited, the crawler connects only to the address it checked, which closes DNS rebinding, and the API ships as a non-root container image that CI tests end to end.
 
 [![CI](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml/badge.svg)](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml)
 
@@ -28,7 +28,7 @@ Hop is a discovery app: one click on the Hop button shows a page the user is lik
 hop/
 ├── backend/            # FastAPI API
 ├── frontend/           # React app
-├── docker-compose.yml  # Postgres, Redis, and Mailpit for local development
+├── docker-compose.yml  # Postgres, Redis, and Mailpit for local development; the API image for make integration
 ├── init.sql            # Enables pgvector when the database is first created
 ├── Makefile            # Common commands
 └── .env.example        # Environment variables template
@@ -108,6 +108,8 @@ The worker's log shows what happened to each URL. Each new page is then enriched
 | `make eval-curator` | Score the curator on the labeled evaluation set with the real LLM (`make eval-curator args="--tag injection"` for some cases) |
 | `make loadtest` | Load test `POST /hop` in its own database and report latency (`make loadtest args="--no-queue"` to compare) |
 | `make test-db` | Create the test database (once) |
+| `make image` | Build the API container image (`hop-api`) |
+| `make integration` | Build and start the API container, then run the end-to-end tests against it (needs `make up`) |
 | `make api` | Start the backend with reload |
 | `make web` | Start the frontend development server |
 | `make format` | Fix lint issues and format backend and frontend code |
@@ -121,7 +123,7 @@ Before committing, run `make format` and `make check`.
 
 ## Contributing
 
-Run `make check` before pushing. CI runs the same checks on every push to `main`.
+Run `make check` before pushing. CI runs the same checks on every push to `main`, and also builds the container image and runs the integration tests against it.
 
 ## More details
 

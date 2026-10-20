@@ -41,6 +41,9 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
+# The integration tests in integration/ run against a running container:
+# make integration
+testpaths = ["tests"]
 
 [tool.uv]
 package = false

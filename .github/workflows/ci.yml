@@ -82,3 +82,87 @@ jobs:
 
       - name: Build
         run: npm run build
+  container:
+    name: Container
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: hop
+          POSTGRES_PASSWORD: hop
+          POSTGRES_DB: hop_it
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hop -d hop_it"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mailpit:
+        image: axllent/mailpit
+        ports:
+          - 1025:1025
+          - 8025:8025
+    env:
+      # Passed into the containers below with --env (host networking, so
+      # localhost is the runner and its service containers)
+      DATABASE_URL: postgresql+asyncpg://hop:hop@localhost:5432/hop_it
+      REDIS_URL: redis://localhost:6379/0
+      SMTP_HOST: localhost
+      SMTP_PORT: "1025"
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Build the image
+        run: docker build -t hop-api backend
+
+      - name: Check that it runs as a non-root user
+        run: |
+          uid="$(docker run --rm hop-api id -u)"
+          echo "The app runs as uid $uid"
+          test "$uid" != "0"
+
+      - name: Migrate and seed
+        run: |
+          docker run --rm --network host --env DATABASE_URL --env REDIS_URL hop-api alembic upgrade head
+          docker run --rm --network host --env DATABASE_URL --env REDIS_URL hop-api python -m scripts.seed_pages
+
+      - name: Start the API
+        run: |
+          docker run -d --name hop-api --network host --read-only --tmpfs /tmp \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --env DATABASE_URL --env REDIS_URL --env SMTP_HOST --env SMTP_PORT hop-api
+          for _ in $(seq 30); do
+            curl -fsS http://127.0.0.1:8000/health/ready && exit 0
+            sleep 1
+          done
+          echo "The API didn't become ready"; exit 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Run the integration tests
+        working-directory: backend
+        env:
+          API_URL: http://127.0.0.1:8000
+          MAILPIT_URL: http://127.0.0.1:8025
+        run: |
+          uv sync --locked
+          uv run pytest integration -v
+
+      - name: Show the API log
+        if: always()
+        run: docker logs hop-api

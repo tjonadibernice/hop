@@ -522,6 +522,35 @@ uv run ruff format .
 
 The iframe checker, crawler, and enrichment tests use fake servers (`tests/web.py` and `httpx.MockTransport`), so they never touch the network or need API keys. Tests run against a real Postgres database (`TEST_DATABASE_URL`), so Postgres must be running. All migrations are applied to the test database at the start of each run, and users and pages are emptied after each test. Redis and email are replaced with in-memory fakes, so tests never send real email.
 
+### Integration tests
+
+`integration/test_api.py` tests the real API container over HTTP, with nothing faked: real Postgres, Redis, and Mailpit. A new user signs up, the test reads the confirmation link from Mailpit's API, confirms, logs in, picks interests, hops a seeded page, likes it, and logs out. Other tests check the health endpoints, the session cookie's flags, the login rate limit, and that admin endpoints refuse ordinary users. They're skipped unless `API_URL` is set, so `uv run pytest` (which only collects `tests/`) never needs Docker.
+
+```bash
+make integration   # from the project root, with make up running
+```
+
+It builds the image, starts it as the Compose service `api` on port 8001 with its own database (`hop_it`) and Redis database (14), migrates and seeds it, runs the tests, and stops the container. Development data is never touched.
+
+## Container image
+
+`backend/Dockerfile` builds one image for the API, the worker, and the scheduler (`make image`, tagged `hop-api`):
+
+- **Two stages.** The build stage installs the locked dependencies with uv (`uv sync --locked --no-dev`, dependencies in their own cached layer). The runtime stage copies only the virtualenv and the code onto `python:3.12-slim`: no uv, no compilers, no tests, no dev tools.
+- **Least privilege.** The app runs as an unprivileged user (uid 10001), and the code is owned by root, so a compromised process can't rewrite it. The Compose service and CI also run it with a read-only filesystem, no Linux capabilities, and `no-new-privileges`.
+- **Configuration from the environment.** No `.env` is copied in (`.dockerignore`); pass settings as environment variables.
+- **Health check.** Docker probes `/health/live` every 30 seconds.
+- **Behind a proxy.** uvicorn runs with `--proxy-headers` and trusts `X-Forwarded-For` only from `FORWARDED_ALLOW_IPS` (default `127.0.0.1`). Set it to the reverse proxy's address in production, so the rate limits see real client addresses.
+
+```bash
+docker run --env-file prod.env -p 8000:8000 hop-api                              # the API
+docker run --env-file prod.env hop-api taskiq worker app.worker:broker           # the worker
+docker run --env-file prod.env hop-api taskiq scheduler app.worker:scheduler     # the scheduler (one only)
+docker run --env-file prod.env hop-api alembic upgrade head                      # migrations
+```
+
+CI's **Container** job builds the image on every push, checks that it doesn't run as root, migrates and seeds a fresh database, starts it with the same restrictions, and runs the integration tests against it.
+
 ## Project structure
 
 ```
@@ -597,6 +626,10 @@ app/
     ├── interests.py
     ├── reactions.py
     └── topics.py
+Dockerfile               # The API, worker, and scheduler image
+.dockerignore            # Keeps .venv, tests, and .env out of the image
+integration/
+└── test_api.py          # End-to-end tests against the running container
 migrations/
 └── versions/            # Migration files, applied in order
 evals/

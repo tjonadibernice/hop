@@ -1,0 +1,13 @@
+# Only what the app needs goes into the image
+.venv/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+tests/
+integration/
+evals/results/
+*.log
+.env
+.env.*
+Dockerfile
+.dockerignore

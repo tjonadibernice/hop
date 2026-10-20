@@ -39,6 +39,37 @@ services:
       - "127.0.0.1:1025:1025"   # SMTP: the app sends email here
       - "127.0.0.1:8025:8025"   # Web inbox: open in your browser
 
+  # The API as a container image (backend/Dockerfile). Only started on
+  # request, by make integration: docker compose --profile app up api
+  # It uses its own database (hop_it) and Redis database (14), so integration
+  # tests never touch development data.
+  api:
+    profiles: ["app"]
+    build: ./backend
+    image: hop-api
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/hop_it
+      REDIS_URL: redis://redis:6379/14
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      APP_BASE_URL: http://localhost:5173
+    ports:
+      - "127.0.0.1:8001:8000"
+    # Least privilege: no writes to the image, no Linux capabilities, and no
+    # way to gain new privileges
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   pgdata:
   redis_data:
