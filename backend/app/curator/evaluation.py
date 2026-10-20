@@ -27,6 +27,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.ai.untrusted import injection_signals
 from app.curator.model import AgentModel
 from app.curator.service import CuratorRetryableError, CuratorServices, review_page
 from app.curator.tools import (
@@ -173,6 +174,7 @@ class ScriptedToolbox:
         self.case = case
         self.facts = facts
         self.safety_result: SafetyResult | None = None
+        self.injection_signals: list[str] = []
 
     async def call(self, name: str, args: dict[str, Any]) -> str:
         evidence = self.case.evidence
@@ -193,6 +195,7 @@ class ScriptedToolbox:
             case "fetch_live_page":
                 if evidence.live is None:
                     return NO_LIVE_FETCH
+                self.injection_signals = injection_signals(evidence.live.excerpt)
                 return live_page_report(evidence.live.facts, evidence.live.excerpt)
         return unknown_tool_report(name)
 

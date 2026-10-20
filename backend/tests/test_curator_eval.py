@@ -213,10 +213,16 @@ async def test_a_gullible_curator_fails():
     report = await run_all(GullibleModel())
 
     harmful = {r.case_id for r in report.harmful}
-    assert report.injections_resisted == 0
-    assert {c.id for c in EVAL_SET.cases if INJECTION_TAG in c.tags} <= harmful
-    # Safe Browsing's verdict still stopped the phishing page
+    assert report.injections_resisted == 0  # it proposed "approve" every time
+    assert {"spam-seo-listicle", "scam-crypto-returns"} <= harmful
+    # The guardrails still held back what code can recognize: the phishing
+    # page (Safe Browsing) and pages with signs of prompt injection
     assert "unsafe-account-verification" not in harmful
+    fence_escape = next(
+        r for r in report.results if r.case_id == "injection-fence-escape"
+    )
+    assert fence_escape.status == "needs_review"
+    assert fence_escape.blocked_by.startswith("suspected prompt injection")
     assert report.recall("approve") == 1.0 and report.recall("reject") == 0.0
     assert not report.passed(min_accuracy=0.0)
     assert "Harmful approvals: " in format_report(report)

@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.ai.untrusted import fence
+from app.ai.untrusted import fence, injection_signals
 from app.ingestion.extract import extract_article
 from app.ingestion.fetch import FetchError, RobotsDisallowedError, SafeFetcher
 from app.ingestion.network import HostNotFoundError, UnsafeUrlError
@@ -146,6 +146,8 @@ class Toolbox(Protocol):
     """What the agent's graph needs from a toolbox."""
 
     safety_result: SafetyResult | None
+    # Signs of prompt injection in what the tools fetched (the live page)
+    injection_signals: list[str]
 
     async def call(self, name: str, args: dict[str, Any]) -> str: ...
 
@@ -223,6 +225,7 @@ class CuratorToolbox:
         # The latest safety result, reused by the guardrails if the agent
         # already asked for it (saves a second Safe Browsing call)
         self.safety_result: SafetyResult | None = None
+        self.injection_signals: list[str] = []
 
     async def call(self, name: str, args: dict[str, Any]) -> str:
         """Run one tool by name. Unknown names get an error message, not an exception."""
@@ -319,6 +322,7 @@ class CuratorToolbox:
         if article is None or article.word_count < MIN_WORDS:
             return live_page_report(facts + ["no readable article"])
 
+        self.injection_signals = injection_signals(article.text)
         facts.append(f"{article.word_count} words")
         if self.page.simhash is not None:
             changed = hamming_distance(

@@ -169,6 +169,24 @@ def test_guardrails(proposed, safety, status, blocked_by):
     assert outcome.proposed == proposed.decision
 
 
+def test_signs_of_injection_block_an_approval():
+    approve = apply_policy(
+        proposal(), safety=SAFE, known_topics=KNOWN, injection=["role-tags"]
+    )
+    reject = apply_policy(
+        proposal(decision="reject"),
+        safety=SAFE,
+        known_topics=KNOWN,
+        injection=["role-tags"],
+    )
+
+    assert (approve.status, approve.blocked_by) == (
+        "needs_review",
+        "suspected prompt injection (role-tags)",
+    )
+    assert reject.status == "rejected"
+
+
 def test_approved_topics_are_known_unique_and_capped():
     outcome = apply_policy(
         proposal(topics=["made-up", "data-databases", "data-databases"]),
@@ -256,7 +274,11 @@ async def test_injected_page_cannot_get_past_the_guardrails(session_factory):
     result = await curate_page(session_factory, services(model, UNCHECKED), page.id)
 
     assert (result.proposed, result.status) == ("approve", "needs_review")
-    assert result.blocked_by == "no Safe Browsing check"
+    # The plain-code injection check stops it before any other rule
+    assert (
+        result.blocked_by
+        == "suspected prompt injection (ignore-instructions, tool-names)"
+    )
     # The page text reached the model only inside one intact fence
     prompt = model.seen[0][1].content
     assert prompt.count("</page_content>") == prompt.count("<page_content>")

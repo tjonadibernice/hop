@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload, undefer
 
 from app.ai.llm import AllProvidersFailedError
+from app.ai.untrusted import injection_signals
 from app.curator.graph import build_graph, initial_state, recursion_limit
 from app.curator.model import AgentModel
 from app.curator.policy import PolicyOutcome, apply_policy
@@ -92,11 +93,16 @@ async def review_page(
         except SafetyCheckError as error:
             raise CuratorRetryableError(f"safety check: {error}") from error
 
+    # Plain-code signs of a page talking to the model, in the stored page or
+    # in the live copy the agent fetched
+    signals = injection_signals(facts.title, facts.summary, facts.content)
+    signals += [s for s in toolbox.injection_signals if s not in signals]
     outcome = apply_policy(
         state["proposal"],
         safety=safety,
         known_topics=set(topics),
         stop_reason=state["stop_reason"],
+        injection=signals,
     )
     return Review(outcome, state["provider"], state["tool_calls"], state["steps"])
 

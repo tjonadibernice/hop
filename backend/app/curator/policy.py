@@ -4,12 +4,14 @@ The agent only proposes. These plain-code rules decide, so a page that
 talks the model into "approve" still can't get past them:
 
 - Safe Browsing said unsafe -> rejected, whatever the agent asked for.
-- "approve" needs a completed Safe Browsing check, at least one known topic,
-  and quality of at least 0.6 (the same bar as automatic approval).
-  Otherwise the page goes to a person instead.
+- "approve" needs no sign of prompt injection in the page (a plain-code
+  check, app/ai/untrusted.py), a completed Safe Browsing check, at least one
+  known topic, and quality of at least 0.6 (the same bar as automatic
+  approval). Otherwise the page goes to a person instead.
 - No decision at all (turn limit, no answer) -> a person decides.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from app.curator.tools import SubmitDecision
@@ -33,6 +35,7 @@ def apply_policy(
     safety: SafetyResult,
     known_topics: set[str],
     stop_reason: str | None = None,
+    injection: Sequence[str] = (),
 ) -> PolicyOutcome:
     if proposal is None:
         return PolicyOutcome(
@@ -66,7 +69,9 @@ def apply_policy(
     topics = list(dict.fromkeys(t for t in proposal.topics if t in known_topics))
     topics = topics[:MAX_TOPICS]
     blocked = None
-    if not safety.checked:
+    if injection:
+        blocked = f"suspected prompt injection ({', '.join(injection)})"
+    elif not safety.checked:
         blocked = "no Safe Browsing check"
     elif not topics:
         blocked = "no known topic"

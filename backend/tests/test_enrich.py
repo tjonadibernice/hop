@@ -80,6 +80,17 @@ def test_route(page, safety, topics, status, reason):
     assert (decision.status, decision.reason) == (status, reason)
 
 
+def test_a_page_that_talks_to_the_model_is_never_approved_automatically():
+    held = route(analysis(), SAFE, GOOD_TOPICS, ["addresses-ai"])
+    spam = route(analysis(is_spam=True), SAFE, GOOD_TOPICS, ["addresses-ai"])
+
+    assert (held.status, held.reason) == (
+        "needs_review",
+        "suspected prompt injection (addresses-ai)",
+    )
+    assert spam.status == "rejected"  # rejections still come first
+
+
 def test_confident_topics_filters_and_ranks():
     result = confident_topics(
         analysis(

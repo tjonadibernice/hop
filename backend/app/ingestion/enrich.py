@@ -20,7 +20,7 @@ from sqlalchemy.orm import undefer
 
 from app.ai.embeddings import EmbeddingError, VoyageEmbedder
 from app.ai.llm import AllProvidersFailedError, LLMRouter
-from app.ai.untrusted import fence, neutralize
+from app.ai.untrusted import fence, injection_signals, neutralize
 from app.ingestion.safety import SafetyChecker, SafetyCheckError, SafetyResult
 from app.models import Page, Topic, page_topics
 
@@ -153,9 +153,16 @@ def confident_topics(analysis: PageAnalysis, known_slugs: set[str]) -> list[Topi
 
 
 def route(
-    analysis: PageAnalysis, safety: SafetyResult, topics: list[TopicLabel]
+    analysis: PageAnalysis,
+    safety: SafetyResult,
+    topics: list[TopicLabel],
+    injection: Sequence[str] = (),
 ) -> Decision:
-    """The rules that turn the checks into a status. Rejections come first."""
+    """The rules that turn the checks into a status. Rejections come first.
+
+    injection: signs that the page talks to the model (see
+    app/ai/untrusted.py). Such a page is never approved automatically.
+    """
     if not safety.safe:
         return Decision("rejected", safety.reason or "unsafe")
     if analysis.is_adult:
@@ -164,6 +171,10 @@ def route(
         return Decision("rejected", "spam")
     if analysis.quality < REJECT_QUALITY:
         return Decision("rejected", f"low quality ({analysis.quality:.2f})")
+    if injection:
+        return Decision(
+            "needs_review", f"suspected prompt injection ({', '.join(injection)})"
+        )
     if not topics:
         return Decision("needs_review", "no confident topic")
     if not safety.checked:
@@ -254,7 +265,8 @@ async def enrich_page(
         ) from error
 
     topics = confident_topics(analysis, set(topic_ids))
-    decision = route(analysis, safety, topics)
+    signals = injection_signals(page.title, page.content)
+    decision = route(analysis, safety, topics, signals)
 
     embedding = None
     if services.embedder is not None and decision.status != "rejected":
