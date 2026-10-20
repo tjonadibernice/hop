@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     curator_max_turns: int = 8  # model calls per review
     curator_max_tool_calls: int = 6
 
+    # Rate limits on sign-up, login, and email confirmation (app/routers/auth.py).
+    # Only turn them off for local experiments.
+    rate_limit_enabled: bool = True
+
     # Emails of the people who may use the review screen and remove pages,
     # separated by commas. Empty: nobody (the admin endpoints answer 403).
     admin_emails: str = ""

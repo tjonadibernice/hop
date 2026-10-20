@@ -60,6 +60,7 @@ Settings are read from the root `.env`. Environment variables take priority.
 | `OLLAMA_BASE_URL` | No | | Third LLM provider, a local model, e.g. `http://localhost:11434/v1` (model `OLLAMA_MODEL`, default `llama3.2`) |
 | `VOYAGE_API_KEY` | No | | Embeddings (model `VOYAGE_MODEL`, default `voyage-4-lite`); without it, pages have no embedding |
 | `SAFE_BROWSING_API_KEY` | No | | Google Safe Browsing; without it, pages can't be auto-approved |
+| `RATE_LIMIT_ENABLED` | No | `true` | Rate limits on sign-up, login, and email confirmation; turn off only for local experiments |
 | `ADMIN_EMAILS` | No | none | Comma-separated emails of the people who may use the review screen and remove pages |
 | `CURATOR_ENABLED` | No | `true` | Let the curator agent review `needs_review` pages; `false` leaves them all for a person |
 | `CURATOR_MAX_TURNS` / `CURATOR_MAX_TOOL_CALLS` | No | `8` / `6` | Most model calls and tool lookups one review may use |
@@ -82,9 +83,9 @@ uv run uvicorn app.main:app --reload
 | --- | --- | --- | --- |
 | `GET /health/live` | No | The process is running | Always `200` |
 | `GET /health/ready` | No | Postgres and Redis respond within 2 seconds | `200` if both are OK, `503` if either fails |
-| `POST /auth/signup` | No | Start sign-up with an email and password (8–128 characters) | Always `202`, or `422` if the input is invalid |
-| `POST /auth/verify-email` | No | Confirm an email with the token from the sign-up email | `200`, or `400` if the token is invalid, used, or expired |
-| `POST /auth/login` | No | Log in with email and password; sets the session cookie | `200` with the user, or `401` |
+| `POST /auth/signup` | No | Start sign-up with an email and password (8–128 characters) | Always `202`, `422` if the input is invalid, or `429` (rate limit) |
+| `POST /auth/verify-email` | No | Confirm an email with the token from the sign-up email | `200`, `400` if the token is invalid, used, or expired, or `429` |
+| `POST /auth/login` | No | Log in with email and password; sets the session cookie | `200` with the user, `401`, or `429` |
 | `POST /auth/logout` | No | End the current session and clear the cookie | Always `204` |
 | `GET /auth/me` | Yes | The logged-in user, with `is_admin` | `200` with the user, or `401` |
 | `GET /topics` | No | All topics | `200` with the list |
@@ -133,7 +134,25 @@ Logging in creates a random session token. Redis stores the token's SHA-256 hash
 - Password hashes made with older Argon2 settings are upgraded on the next successful login.
 - Protected endpoints use the `CurrentUserDep` dependency, which responds `401` without a valid session.
 
-Not yet implemented: rate limiting for login attempts.
+### Rate limits
+
+Sign-up, login, and email confirmation are rate limited in Redis (`app/services/rate_limit.py`), so the limits hold across every API process. Over a limit, the API answers `429` with a `Retry-After` header and "Too many attempts. Please try again in N minutes."
+
+| Endpoint | Limit | Stops |
+| --- | --- | --- |
+| `POST /auth/login` | 30 attempts per IP address per 15 minutes | One address trying many accounts |
+| `POST /auth/login` | 5 failed logins per email and IP address per 15 minutes | Password guessing |
+| `POST /auth/login` | 20 failed logins per email per hour, from any address | Guessing spread over many addresses |
+| `POST /auth/signup` | 10 per IP address per hour | Mass sign-ups |
+| `POST /auth/signup` | 3 per email per hour | Flooding someone's inbox with confirmation emails |
+| `POST /auth/verify-email` | 30 per IP address per 15 minutes | Token guessing (already impractical at 256 bits) |
+
+- **Sliding window counter.** Each rule keeps a count for the current fixed window and the previous one; the previous count is weighted by how much of it still falls within the last window length. A plain fixed window lets twice the limit through around a window boundary; this doesn't, and it needs only two small keys per subject. Refused attempts are counted too, so someone who keeps trying stays limited.
+- **Failures only.** The failed-login limits count only failures and are checked before the password, so a guesser over the limit learns nothing, even when the guess is right. A successful login clears the failures for that email and address.
+- **No account enumeration.** No limit depends on whether an email has an account, so a `429` reveals nothing.
+- **Lockout trade-off.** Anyone can cause the per-email limit for someone else's account. It's set high (20 an hour), and the owner's own address keeps its separate, lower limit.
+- **Privacy.** Emails and IP addresses are hashed (SHA-256) before they become part of a Redis key.
+- **Behind a proxy.** The limits use the client address uvicorn reports. In production, run uvicorn with `--proxy-headers --forwarded-allow-ips=<the proxy's address>`, or every request would appear to come from the proxy.
 
 ## Hopping
 
@@ -567,6 +586,7 @@ app/
 │   ├── experiments.py   # A/B assignment and the liked-rate report
 │   ├── reactions.py     # Likes, dislikes, and the likes list
 │   ├── review.py        # Admin actions: approve, reject, remove, purge
+│   ├── rate_limit.py    # Sliding-window rate limits in Redis
 │   ├── sessions.py      # Session tokens in Redis
 │   └── topics.py        # Topics and interests
 └── routers/             # Endpoints
@@ -606,6 +626,7 @@ tests/
 ├── test_prompt_injection.py  # Fences, guardrails, and tools against injected pages
 ├── test_curator_eval.py # The evaluation set and its scoring
 ├── test_admin.py        # Admin access, the queue, approve/reject/remove/purge
+├── test_rate_limit.py   # The sliding window, and the login, sign-up, and confirmation limits
 ├── factories.py         # Helpers that create users, pages, reactions
 ├── test_embeddings.py   # Voyage client
 ├── test_enrich.py       # Routing rules and enrichment
