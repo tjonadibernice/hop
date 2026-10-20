@@ -1,4 +1,5 @@
-from app.curator.tools import PageFacts, fence
+from app.ai.untrusted import fence, neutralize
+from app.curator.tools import PageFacts
 from app.ingestion.enrich import MAX_CONTENT_CHARS
 
 SYSTEM_PROMPT = """\
@@ -39,8 +40,9 @@ def page_message(page: PageFacts) -> str:
     """The page under review: what Hop already knows, then the fenced text."""
     quality = "none" if page.quality_score is None else f"{page.quality_score:.2f}"
     lines = [
-        f"URL: {page.url}",
-        f"Site: {page.site}",
+        # The URL is chosen by the website too, so it gets the same treatment
+        f"URL: {neutralize(page.url)}",
+        f"Site: {neutralize(page.site)}",
         f"Why it needs review: {page.status_reason or 'unknown'}",
         f"First-pass quality score: {quality}",
         f"Current topics: {', '.join(page.topics) or 'none'}",

@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links poll-feeds embed ab-report loadtest curate check test-db
+.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links poll-feeds embed ab-report loadtest curate eval-curator check test-db
 
 up:
 	docker compose up -d
@@ -56,6 +56,10 @@ ab-report:
 
 curate:
 	cd backend && uv run python -m scripts.curate_pages
+
+# Options go in args, e.g.: make eval-curator args="--tag injection --repeat 3"
+eval-curator:
+	cd backend && uv run python -m scripts.eval_curator $(args)
 
 # Options go in args, e.g.: make loadtest args="--no-queue --users 50"
 loadtest:

@@ -12,3 +12,6 @@ frontend/dist/
 Thumbs.db
 .idea/
 *.log
+
+# Curator evaluation reports (make eval-curator)
+backend/evals/results/

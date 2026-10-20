@@ -2,7 +2,7 @@
 
 Hop is a discovery app: one click on the Hop button shows a page the user is likely to enjoy but would never have found.
 
-**Status:** in progress. Phases 1 (skeleton) and 2 (Hop MVP) are complete: users can sign up, pick interests, hop, and like pages. Phase 3 (ingestion pipeline) is complete: a background worker fetches, cleans, and deduplicates new pages, uses an LLM, embeddings, and a safety screen to approve, reject, or flag them for review, re-checks approved pages every 30 days to retire broken ones, and finds new pages by itself from RSS/Atom feeds and from the links inside approved pages. Phase 4 (recommendations) is complete: a recommender (taste embeddings and Thompson sampling) runs as an A/B test against random picks, served from per-user Redis queues that cut p95 hop latency from 208 ms to 37 ms. Phase 5 (AI curator) is in progress: a LangGraph agent with read-only tools reviews the pages the automatic checks couldn't decide, behind code guardrails it can't override, and admins decide the rest on a review screen where they can also remove or purge any page.
+**Status:** in progress. Phases 1 (skeleton) and 2 (Hop MVP) are complete: users can sign up, pick interests, hop, and like pages. Phase 3 (ingestion pipeline) is complete: a background worker fetches, cleans, and deduplicates new pages, uses an LLM, embeddings, and a safety screen to approve, reject, or flag them for review, re-checks approved pages every 30 days to retire broken ones, and finds new pages by itself from RSS/Atom feeds and from the links inside approved pages. Phase 4 (recommendations) is complete: a recommender (taste embeddings and Thompson sampling) runs as an A/B test against random picks, served from per-user Redis queues that cut p95 hop latency from 208 ms to 37 ms. Phase 5 (AI curator) is complete: a LangGraph agent with read-only tools reviews the pages the automatic checks couldn't decide, behind code guardrails it can't override, and admins decide the rest on a review screen where they can also remove or purge any page. A labeled evaluation set of 33 pages measures the agent's accuracy and how often it resists prompt injection, and injection tests run in CI on every push.
 
 [![CI](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml/badge.svg)](https://github.com/tjonadibernice/hop/actions/workflows/ci.yml)
 
@@ -105,6 +105,7 @@ The worker's log shows what happened to each URL. Each new page is then enriched
 | `make embed` | Add embeddings to approved pages that don't have one (needs `VOYAGE_API_KEY`) |
 | `make ab-report` | Compare liked rates: recommender vs. random picks |
 | `make curate` | Queue every `needs_review` page the curator agent hasn't reviewed yet (the worker must be running) |
+| `make eval-curator` | Score the curator on the labeled evaluation set with the real LLM (`make eval-curator args="--tag injection"` for some cases) |
 | `make loadtest` | Load test `POST /hop` in its own database and report latency (`make loadtest args="--no-queue"` to compare) |
 | `make test-db` | Create the test database (once) |
 | `make api` | Start the backend with reload |
@@ -124,5 +125,5 @@ Run `make check` before pushing. CI runs the same checks on every push to `main`
 
 ## More details
 
-- [Backend README](backend/README.md): API setup, endpoints, sign-up and login, hopping, iframe checks, the ingestion pipeline, migrations, tests
+- [Backend README](backend/README.md): API setup, endpoints, sign-up and login, hopping, iframe checks, the ingestion pipeline, the curator agent, its evaluation and prompt-injection defenses, migrations, tests
 - [Frontend README](frontend/README.md): pages, light and night themes, the Hop screen, login state, API proxy, scripts

@@ -18,7 +18,7 @@ from langgraph.graph.message import add_messages
 from pydantic import ValidationError
 
 from app.curator.model import AgentModel
-from app.curator.tools import CuratorToolbox, SubmitDecision
+from app.curator.tools import SubmitDecision, Toolbox
 
 NUDGE = "Use one of the tools, or call submit_decision with your decision."
 TOOL_RESULT_CHARS = 500  # kept per step in the audit trail
@@ -55,7 +55,7 @@ def _last_ai(state: CuratorState) -> AIMessage:
 
 
 def build_graph(
-    model: AgentModel, toolbox: CuratorToolbox, *, max_turns: int, max_tool_calls: int
+    model: AgentModel, toolbox: Toolbox, *, max_turns: int, max_tool_calls: int
 ):
     async def agent(state: CuratorState) -> dict:
         if state["turns"] >= max_turns:

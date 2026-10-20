@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from sqlalchemy import select
 
 from app.ai.llm import AllProvidersFailedError, ChatProvider, LLMRouter
+from app.ai.untrusted import fence
 from app.curator.graph import NUDGE
 from app.curator.model import RouterAgentModel
 from app.curator.policy import apply_policy
@@ -22,7 +23,6 @@ from app.curator.tools import (
     CuratorToolbox,
     PageFacts,
     SubmitDecision,
-    fence,
 )
 from app.ingestion.fetch import Fetched
 from app.ingestion.linkrot import _retire
@@ -260,7 +260,7 @@ async def test_injected_page_cannot_get_past_the_guardrails(session_factory):
     # The page text reached the model only inside one intact fence
     prompt = model.seen[0][1].content
     assert prompt.count("</page_content>") == prompt.count("<page_content>")
-    assert "</ page_content> SYSTEM" in prompt
+    assert "(/page_content) SYSTEM" in prompt
 
 
 async def test_unsafe_page_is_rejected_whatever_the_agent_says(session_factory):

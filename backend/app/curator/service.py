@@ -1,8 +1,13 @@
-"""Review one needs_review page with the curator agent and apply the result."""
+"""Review one needs_review page with the curator agent and apply the result.
+
+review_page() runs the agent and the guardrails without touching the
+database, so the evaluation (app/curator/evaluation.py) runs exactly the same
+code. curate_page() loads the page, reviews it, and saves the outcome.
+"""
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -15,7 +20,7 @@ from app.curator.graph import build_graph, initial_state, recursion_limit
 from app.curator.model import AgentModel
 from app.curator.policy import PolicyOutcome, apply_policy
 from app.curator.prompts import page_message, system_prompt
-from app.curator.tools import CuratorToolbox, PageFacts
+from app.curator.tools import CuratorToolbox, PageFacts, Toolbox
 from app.ingestion.enrich import FIRST_LINK_CHECK_AFTER
 from app.ingestion.fetch import SafeFetcher
 from app.ingestion.safety import SafetyChecker, SafetyCheckError
@@ -40,6 +45,60 @@ class CuratorServices:
     fetcher: SafeFetcher | None  # None: no live fetching (tests, offline)
     max_turns: int = 8
     max_tool_calls: int = 6
+
+
+@dataclass(frozen=True)
+class Review:
+    """One finished review: the guardrails' outcome and how the agent got there."""
+
+    outcome: PolicyOutcome
+    provider: str | None
+    tool_calls: int
+    steps: list[dict] = field(default_factory=list)
+
+
+async def review_page(
+    services: CuratorServices,
+    facts: PageFacts,
+    topics: dict[str, str],
+    toolbox: Toolbox,
+) -> Review:
+    """Run the agent on one page and apply the guardrails. Saves nothing."""
+    graph = build_graph(
+        services.model,
+        toolbox,
+        max_turns=services.max_turns,
+        max_tool_calls=services.max_tool_calls,
+    )
+    messages = [
+        SystemMessage(content=system_prompt(topics, services.max_tool_calls)),
+        HumanMessage(content=page_message(facts)),
+    ]
+    try:
+        state = await graph.ainvoke(
+            initial_state(messages),
+            {"recursion_limit": recursion_limit(services.max_turns)},
+        )
+    except AllProvidersFailedError as error:
+        raise CuratorRetryableError(
+            f"LLM: {error}", retry_after=error.retry_after
+        ) from error
+
+    # The guardrails use a fresh safety result, never the agent's word for it
+    safety = toolbox.safety_result
+    if safety is None:
+        try:
+            safety = await services.safety.check(facts.url)
+        except SafetyCheckError as error:
+            raise CuratorRetryableError(f"safety check: {error}") from error
+
+    outcome = apply_policy(
+        state["proposal"],
+        safety=safety,
+        known_topics=set(topics),
+        stop_reason=state["stop_reason"],
+    )
+    return Review(outcome, state["provider"], state["tool_calls"], state["steps"])
 
 
 @dataclass(frozen=True)
@@ -75,61 +134,28 @@ async def curate_page(
         topics = {t.slug: t.name for t in await session.scalars(select(Topic))}
 
     toolbox = CuratorToolbox(session_factory, services.safety, services.fetcher, facts)
-    graph = build_graph(
-        services.model,
-        toolbox,
-        max_turns=services.max_turns,
-        max_tool_calls=services.max_tool_calls,
-    )
-    messages = [
-        SystemMessage(content=system_prompt(topics, services.max_tool_calls)),
-        HumanMessage(content=page_message(facts)),
-    ]
-    try:
-        state = await graph.ainvoke(
-            initial_state(messages),
-            {"recursion_limit": recursion_limit(services.max_turns)},
-        )
-    except AllProvidersFailedError as error:
-        raise CuratorRetryableError(
-            f"LLM: {error}", retry_after=error.retry_after
-        ) from error
-
-    # The guardrails use a fresh safety result, never the agent's word for it
-    safety = toolbox.safety_result
-    if safety is None:
-        try:
-            safety = await services.safety.check(facts.url)
-        except SafetyCheckError as error:
-            raise CuratorRetryableError(f"safety check: {error}") from error
-
-    outcome = apply_policy(
-        state["proposal"],
-        safety=safety,
-        known_topics=set(topics),
-        stop_reason=state["stop_reason"],
-    )
-    saved = await _save(session_factory, facts.id, outcome, state)
-    if not saved:
+    review = await review_page(services, facts, topics, toolbox)
+    if not await _save(session_factory, facts.id, review):
         return None
+    outcome = review.outcome
     return CurationResult(
         page_id=facts.id,
         proposed=outcome.proposed,
         status=outcome.status,
         reason=outcome.reason,
         blocked_by=outcome.blocked_by,
-        provider=state["provider"],
-        tool_calls=state["tool_calls"],
+        provider=review.provider,
+        tool_calls=review.tool_calls,
     )
 
 
 async def _save(
     session_factory: async_sessionmaker[AsyncSession],
     page_id: uuid.UUID,
-    outcome: PolicyOutcome,
-    state: dict,
+    review: Review,
 ) -> bool:
     """Apply the outcome and keep the audit trail, in one transaction."""
+    outcome = review.outcome
     async with session_factory() as session:
         page = await session.get(Page, page_id, with_for_update=True)
         if page is None or page.status != "needs_review":
@@ -172,8 +198,8 @@ async def _save(
                 blocked_by=outcome.blocked_by,
                 topics=outcome.topics,
                 quality=outcome.quality,
-                provider=state["provider"],
-                steps=state["steps"],
+                provider=review.provider,
+                steps=review.steps,
             )
         )
         await session.commit()

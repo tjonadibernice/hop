@@ -7,14 +7,16 @@ so the model can tell data from instructions.
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from app.ai.untrusted import fence
 from app.ingestion.extract import extract_article
 from app.ingestion.fetch import FetchError, RobotsDisallowedError, SafeFetcher
 from app.ingestion.network import HostNotFoundError, UnsafeUrlError
@@ -140,11 +142,70 @@ class PageFacts:
         )
 
 
-def fence(tag: str, text: str) -> str:
-    """Mark untrusted text clearly. Closing tags inside it are neutralized,
-    so a page can't end the fence early and pretend to be instructions."""
-    cleaned = text.replace(f"</{tag}>", f"</ {tag}>")
-    return f"<{tag}>\n{cleaned}\n</{tag}>"
+class Toolbox(Protocol):
+    """What the agent's graph needs from a toolbox."""
+
+    safety_result: SafetyResult | None
+
+    async def call(self, name: str, args: dict[str, Any]) -> str: ...
+
+
+# How each tool reports what it found. Shared with the evaluation's scripted
+# toolbox (app/curator/evaluation.py), so the model sees the same wording there.
+
+
+def site_history_report(
+    site: str, counts: dict[str, int], examples: Sequence[str]
+) -> str:
+    summary = (
+        f"Other pages from {site}: {counts.get('approved', 0)} approved, "
+        f"{counts.get('rejected', 0)} rejected, "
+        f"{counts.get('needs_review', 0)} waiting for review, "
+        f"{counts.get('dead', 0)} dead, {counts.get('pending', 0)} pending."
+    )
+    if not examples:
+        return summary
+    return summary + "\n" + fence("untrusted_titles", "\n".join(examples))
+
+
+def similar_pages_report(rows: Sequence[tuple[float, str, Sequence[str]]]) -> str:
+    """rows: (similarity from 0 to 1, title, topic slugs), most similar first."""
+    if not rows:
+        return "No approved pages with embeddings to compare with yet."
+    lines = [
+        f"{similarity:.2f} similar: {title} [{', '.join(topics) or 'no topic'}]"
+        for similarity, title, topics in rows
+    ]
+    return "Most similar approved pages (1.00 = identical):\n" + fence(
+        "untrusted_titles", "\n".join(lines)
+    )
+
+
+def safety_report(result: SafetyResult) -> str:
+    if not result.safe:
+        return f"UNSAFE: {result.reason or 'flagged'}."
+    if not result.checked:
+        return (
+            "Not on Hop's blocklist, but Safe Browsing isn't configured, "
+            "so the page can't be approved."
+        )
+    return "Safe: not on the blocklist, and Safe Browsing found no threats."
+
+
+def unknown_tool_report(name: str) -> str:
+    return f"Unknown tool {name!r}. Available: {', '.join(sorted(TOOL_NAMES))}."
+
+
+NO_EMBEDDING = "This page has no embedding, so similar pages can't be looked up."
+NO_LIVE_FETCH = "Live fetching isn't available here."
+
+
+def live_page_report(facts: Sequence[str], excerpt: str | None = None) -> str:
+    """facts: short findings such as "HTTP 200"; excerpt: the live text, if any."""
+    report = "; ".join(facts) + "."
+    if excerpt is None:
+        return report
+    return report + "\n" + fence("page_content", excerpt[:LIVE_EXCERPT_CHARS])
 
 
 class CuratorToolbox:
@@ -174,7 +235,7 @@ class CuratorToolbox:
                 return await self.check_safety()
             case "fetch_live_page":
                 return await self.fetch_live_page()
-        return f"Unknown tool {name!r}. Available: {', '.join(sorted(TOOL_NAMES))}."
+        return unknown_tool_report(name)
 
     async def site_history(self) -> str:
         site = self.page.site
@@ -201,19 +262,11 @@ class CuratorToolbox:
                     note = f" (reason: {reason})" if status == "rejected" else ""
                     examples.append(f"{status}: {title}{note}")
 
-        summary = (
-            f"Other pages from {site}: {counts.get('approved', 0)} approved, "
-            f"{counts.get('rejected', 0)} rejected, "
-            f"{counts.get('needs_review', 0)} waiting for review, "
-            f"{counts.get('dead', 0)} dead, {counts.get('pending', 0)} pending."
-        )
-        if not examples:
-            return summary
-        return summary + "\n" + fence("untrusted_titles", "\n".join(examples))
+        return site_history_report(site, counts, examples)
 
     async def similar_pages(self) -> str:
         if self.page.embedding is None:
-            return "This page has no embedding, so similar pages can't be looked up."
+            return NO_EMBEDDING
         distance = Page.embedding.cosine_distance(self.page.embedding)
         async with self.session_factory() as session:
             rows = (
@@ -226,15 +279,8 @@ class CuratorToolbox:
                     .options(selectinload(Page.topics))
                 )
             ).all()
-        if not rows:
-            return "No approved pages with embeddings to compare with yet."
-        lines = [
-            f"{1 - d:.2f} similar: {page.title} "
-            f"[{', '.join(t.slug for t in page.topics) or 'no topic'}]"
-            for page, d in rows
-        ]
-        return "Most similar approved pages (1.00 = identical):\n" + fence(
-            "untrusted_titles", "\n".join(lines)
+        return similar_pages_report(
+            [(1 - d, page.title, [t.slug for t in page.topics]) for page, d in rows]
         )
 
     async def check_safety(self) -> str:
@@ -243,18 +289,11 @@ class CuratorToolbox:
         except SafetyCheckError as error:
             return f"The safety check couldn't run right now ({error})."
         self.safety_result = result
-        if not result.safe:
-            return f"UNSAFE: {result.reason or 'flagged'}."
-        if not result.checked:
-            return (
-                "Not on Hop's blocklist, but Safe Browsing isn't configured, "
-                "so the page can't be approved."
-            )
-        return "Safe: not on the blocklist, and Safe Browsing found no threats."
+        return safety_report(result)
 
     async def fetch_live_page(self) -> str:
         if self.fetcher is None:
-            return "Live fetching isn't available here."
+            return NO_LIVE_FETCH
         try:
             fetched = await self.fetcher.get(self.page.url, max_bytes=MAX_PAGE_BYTES)
         except RobotsDisallowedError:
@@ -270,15 +309,15 @@ class CuratorToolbox:
         if site_of(fetched.url) != self.page.site:
             facts.append(f"redirects to another site: {site_of(fetched.url)}")
         if fetched.status_code >= 400:
-            return "; ".join(facts) + "."
+            return live_page_report(facts)
         content_type = (
             fetched.headers.get("content-type", "").split(";")[0].strip().lower()
         )
         if content_type not in HTML_TYPES:
-            return "; ".join(facts + [f"not HTML ({content_type or 'unknown'})"]) + "."
+            return live_page_report(facts + [f"not HTML ({content_type or 'unknown'})"])
         article = extract_article(fetched.body, fetched.url)
         if article is None or article.word_count < MIN_WORDS:
-            return "; ".join(facts + ["no readable article"]) + "."
+            return live_page_report(facts + ["no readable article"])
 
         facts.append(f"{article.word_count} words")
         if self.page.simhash is not None:
@@ -286,8 +325,4 @@ class CuratorToolbox:
                 simhash(article.text), from_signed(self.page.simhash)
             )
             facts.append(f"text differs from the stored copy by {changed} of 64 bits")
-        return (
-            "; ".join(facts)
-            + ".\n"
-            + fence("page_content", article.text[:LIVE_EXCERPT_CHARS])
-        )
+        return live_page_report(facts, article.text)

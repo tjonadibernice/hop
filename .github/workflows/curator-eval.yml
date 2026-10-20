@@ -1,0 +1,64 @@
+# Runs the curator on the labeled evaluation set with a real model.
+# Manual only (Actions tab > Curator eval > Run workflow), because each run
+# uses about 100 model calls. Needs the repository secret GEMINI_API_KEY.
+name: Curator eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Only run cases with this tag (empty runs every case)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    name: Evaluate the curator
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # The evaluation never touches the database, but the settings need a URL
+      DATABASE_URL: postgresql+asyncpg://unused:unused@localhost:5432/unused
+      REDIS_URL: redis://localhost:6379/0
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_REQUESTS_PER_MINUTE: "10"
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run the evaluation
+        env:
+          # Passed through the environment, never pasted into the script
+          TAG: ${{ inputs.tag }}
+        run: uv run python -m scripts.eval_curator ${TAG:+--tag "$TAG"} --out eval-report.json
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: curator-eval-report
+          path: backend/eval-report.json
+          if-no-files-found: ignore
