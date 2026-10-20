@@ -48,6 +48,7 @@ Settings are read from the root `.env`. Environment variables take priority.
 | `SESSION_TTL_SECONDS` | No | `604800` (7 days) | How long a login lasts |
 | `COOKIE_SECURE` | No | `false` | Send the session cookie over HTTPS only; set to `true` in production |
 | `RECOMMENDER_PERCENT` | No | `50` | Share of users (0–100) who get the recommender instead of random picks; the A/B split |
+| `INTERACTIVE_PERCENT` | No | `70` | Share of hops (0–100) that are interactive pages; the rest are articles |
 | `HOP_QUEUE_ENABLED` | No | `true` | Serve hops from each user's precomputed queue in Redis; `false` picks every page while the user waits |
 | `CRAWLER_USER_AGENT` | No | `HopBot/0.1 (+https://github.com/tjonadibernice/hop)` | How the crawler identifies itself to websites |
 | `CRAWL_DELAY_SECONDS` | No | `1.0` | Minimum time between two requests to the same website |
@@ -160,6 +161,7 @@ Users choose 3–15 topics as interests. Each `POST /hop` picks an **approved** 
 
 - `POST` is used instead of `GET` because each hop changes data (it records a view), and `GET` requests must not change anything.
 - Two strategies run side by side as an A/B test (`app/services/experiments.py`): **random** (`ORDER BY random()`, the baseline) and the **recommender** (below).
+- **Mostly interactive.** Hop prefers interactive pages (tools, simulations, games, visualizations, playgrounds) over articles. Each hop slot gets a kind, drawn independently: interactive with probability `INTERACTIVE_PERCENT` (default 70), otherwise an article. Each kind is then picked in one batch by the user's strategy (random or recommender), and when a kind runs short for that user, any page fills in, so the mix never stops anyone from hopping. The response includes `kind`, and the frontend marks interactive pages with a **Try it** badge.
 - The response includes `strategy` (`"recommender"` or `"random"`), and the frontend shows it as **Picked for you** or **Random find**. Note that the label is part of what the A/B test measures: users see which kind of pick they got.
 - Every response has a `Server-Timing: app;dur=12.3` header with the time the app spent on it (visible in the browser's Network tab). `POST /hop` also sends `X-Hop-Source: queue` or `live` (next section).
 
@@ -255,7 +257,11 @@ A site can change its headers later; set `embeddable` back to `NULL` to check a 
 
 ### Starter pages
 
-`make seed` loads the pages listed in `scripts/seed_pages.json` (3 per topic) as `approved`, since they're hand-picked. It skips URLs that already exist, so it's safe to run again. To add pages, add entries to the JSON file with a URL, title, summary, and topic slugs.
+`make seed` loads the 51 interactive sites listed in `scripts/seed_pages.json` as `approved`, since they're hand-picked: simulations like *The Evolution of Trust* and *TensorFlow Playground*, games like *Learn Git Branching* and *The SQL Murder Mystery*, and tools like *regex101* and *CyberChef*, across Hop's 15 topics. It skips URLs that already exist, so it's safe to run again; run `make check-embeds` afterwards to see which can be shown inside Hop. To add pages, add entries with a URL, title, summary, topic slugs, and `"kind": "interactive"` or `"article"`.
+
+### Excluded sites
+
+`app/ingestion/excluded_sites.txt` lists sites Hop never collects: not unsafe (that's the blocklist), just not what Hop is for. Wikipedia (every language and the mobile site) and Wikiwand are on it. The pipeline refuses their URLs before fetching (`excluded_site`), also after a redirect, and discovery never queues links to them. `make exclude-sites` takes pages already in the library out of Hop (status `rejected`, reason `excluded site (...)`); run it after adding a site.
 
 ## Ingestion pipeline
 
@@ -275,8 +281,10 @@ For each URL, the worker (`app/ingestion/pipeline.py`):
     - **robots.txt**: obeys the site's rules for `HopBot`, cached in Redis for 24 hours. A missing file (4xx) allows everything; an unreachable one (5xx) blocks everything ([RFC 9309](https://www.rfc-editor.org/rfc/rfc9309)).
     - **Politeness** (`politeness.py`): at most one request per site every `CRAWL_DELAY_SECONDS`, enforced through Redis, so it holds across workers.
     - **Limits**: 5 redirects, 2 MB per page, HTML only.
-3. **Extracts the article** (`extract.py`) with trafilatura: main text and title, without menus and footers. Pages under 200 words are skipped.
-4. **Checks for duplicates**: the page's own `<link rel="canonical">` (trusted only on the same site), then **SimHash** (`simhash.py`) for near-duplicates such as the same article on another URL.
+3. **Reads the page** (`interactive.py`) as an article or an interactive site. Interactive sites are mostly canvas, controls, and JavaScript with little text, so an article-only reader would throw them away. The HTML is scored for signs of interactivity: a `<canvas>` (+3), graphics, game, or simulation libraries such as three.js, PixiJS, p5.js, D3, or WebAssembly (+3), `og:type` game (+3), sliders (+2), three or more controls (+2; search, email, and text boxes don't count, since every blog has them), an almost empty page that JavaScript fills in (+2), many buttons outside menus (+1), inline SVGs with scripts (+1), and words like "interactive", "simulator", or "playground" in the title or description (+1); a long read with no canvas or sliders loses 3.
+    - **Interactive** (score 4 or more, or 2 or more when there's no article): stored with a **profile** in place of the article text: the title, description, what's on the page ("1 canvas, 4 sliders, uses three.js"), headings, and up to 600 words of visible text. It needs a title or description and at least 12 words. Only the HTML is read; nothing is rendered, so a page built entirely in JavaScript is kept as a candidate and the AI decides.
+    - **Article**: the main text and title, extracted with trafilatura without menus and footers. Pages under 200 words are skipped.
+4. **Checks for duplicates**: the page's own `<link rel="canonical">` (trusted only on the same site), then **SimHash** (`simhash.py`) for near-duplicates such as the same article on another URL. Interactive pages skip the near-duplicate check, because tools on one site share much of their short profiles.
 5. **Stores it as `pending`**, with the text, word count, fingerprint, and whether it can be shown in an iframe, then queues it for enrichment (below). Hop only shows `approved` pages.
 
 | Outcome | Meaning |
@@ -285,9 +293,10 @@ For each URL, the worker (`app/ingestion/pipeline.py`):
 | `duplicate` | The same URL (or its canonical URL) is already stored |
 | `near_duplicate` | The same text is already stored under another URL |
 | `invalid_url` / `unsafe_url` | Not an http(s) URL / points to a private address |
+| `excluded_site` | On a site Hop never collects, such as Wikipedia (see [Excluded sites](#excluded-sites)) |
 | `blocked_by_robots` | The site's robots.txt asks us not to fetch it |
 | `fetch_failed` | 4xx response, unknown host, or still failing after retries |
-| `not_html` / `no_content` / `too_short` | Not a web page, no readable text, or under 200 words |
+| `not_html` / `no_content` / `too_short` | Not a web page; no readable text (or an interactive page with no title or description); or an article under 200 words |
 
 Timeouts, network errors, `429`, and `5xx` responses are retried twice, after 10 and 60 seconds. Jobs go through a Redis Stream, so a job is only removed once a worker finishes it; results are kept in Redis for 7 days.
 
@@ -306,7 +315,7 @@ Known limit: two near-duplicates processed at the same moment by different worke
 After a page is stored, the worker's `enrich_page` task (`app/ingestion/enrich.py`) decides whether Hop shows it:
 
 1. **Safety screen** (`safety.py`): the domain blocklist in `app/ingestion/blocked_domains.txt` (subdomains included), then [Google Safe Browsing](https://developers.google.com/safe-browsing/reference/rest) (the v4 Lookup API, `threatMatches:find`, which answers in JSON; v5's `urls:search` only answers in protobuf). A blocked or flagged page is rejected right away, without an LLM call.
-2. **One LLM call** returns JSON matching a schema: a 2-sentence summary, up to 3 topics from Hop's 15 (each with a confidence), a quality score from 0 to 1, spam and adult flags, and a one-line reason. The title and text are fenced in `<untrusted_titles>` and `<page_content>` tags (see [Prompt injection](#prompt-injection)), and the instructions say to ignore anything written inside them and to flag a page that tries to instruct the model as spam. Every answer is validated with Pydantic.
+2. **One LLM call** returns JSON matching a schema: the page's `kind` (`interactive` or `article`, which becomes the page's kind), a 2-sentence summary, up to 3 topics from Hop's 15 (each with a confidence), a quality score from 0 to 1, spam and adult flags, and a one-line reason. The title and text are fenced in `<untrusted_titles>` and `<page_content>` tags (see [Prompt injection](#prompt-injection)), and the instructions say to ignore anything written inside them and to flag a page that tries to instruct the model as spam. Every answer is validated with Pydantic. The prompt says Hop most wants interactive pages and judges them by what they let people do and learn, not by how much text they have; a bare utility, a sign-up wall, or a store scores low.
 3. **Embedding** (`app/ai/embeddings.py`): Voyage `voyage-4-lite`, 1,024 numbers per page, stored in `pages.embedding` (pgvector, HNSW index) for the recommender.
 4. **Routing rules** (plain code, in order):
 
@@ -584,13 +593,16 @@ app/
 │   ├── linkrot.py       # Re-checks approved pages, retires broken ones
 │   ├── backfill.py      # Embeds pages that have no embedding
 │   ├── enrich.py        # LLM analysis, embedding, and routing rules
-│   ├── safety.py        # Blocklist and Safe Browsing
-│   ├── blocked_domains.txt  # Domains never stored
+│   ├── safety.py        # Blocklist, excluded sites, and Safe Browsing
+│   ├── blocked_domains.txt  # Unsafe domains, never stored
+│   ├── excluded_sites.txt   # Sites Hop doesn't collect (Wikipedia)
+│   ├── exclusions.py    # Takes pages from excluded sites out of Hop
 │   ├── urls.py          # URL normalization
 │   ├── network.py       # SSRF protection
 │   ├── fetch.py         # Safe fetching: redirects, robots.txt, size limits
 │   ├── politeness.py    # One request per site at a time
 │   ├── extract.py       # Article text, title, canonical link
+│   ├── interactive.py   # Article or interactive site, and the interactive profile
 │   └── simhash.py       # Near-duplicate fingerprints
 ├── models/              # SQLAlchemy models (tables)
 │   ├── base.py          # Base class and constraint naming convention
@@ -647,7 +659,8 @@ scripts/
 ├── enqueue_enrichment.py  # Queues pending pages for enrichment
 ├── enqueue_urls.py      # Queues a URL list for the worker
 ├── sources.txt          # Sample URLs for make ingest
-├── seed_pages.json      # Starter pages
+├── seed_pages.json      # Starter pages (51 interactive sites)
+├── exclude_sites.py     # Takes pages from excluded sites out of Hop
 └── seed_pages.py        # Loads the starter pages
 tests/
 ├── conftest.py          # Test database, fakes, test clients
@@ -660,6 +673,7 @@ tests/
 ├── test_curator_eval.py # The evaluation set and its scoring
 ├── test_admin.py        # Admin access, the queue, approve/reject/remove/purge
 ├── test_rate_limit.py   # The sliding window, and the login, sign-up, and confirmation limits
+├── test_interactive.py  # Interactive pages, excluded sites, and the hop mix
 ├── factories.py         # Helpers that create users, pages, reactions
 ├── test_embeddings.py   # Voyage client
 ├── test_enrich.py       # Routing rules and enrichment

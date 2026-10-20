@@ -22,11 +22,15 @@ export type Message = {
   message: string;
 };
 
+/** Something to use, play, or explore, or something to read. */
+export type PageKind = "interactive" | "article";
+
 export type Page = {
   id: string;
   url: string;
   title: string;
   summary: string | null;
+  kind: PageKind;
   /** false: the site refuses iframes. null: not checked yet. */
   embeddable: boolean | null;
   topics: Topic[];
@@ -81,6 +85,7 @@ export type AdminPage = {
   url: string;
   site: string | null;
   title: string;
+  kind: PageKind;
   status: PageStatus;
   status_reason: string | null;
   quality_score: number | null;

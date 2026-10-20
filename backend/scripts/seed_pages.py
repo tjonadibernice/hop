@@ -1,6 +1,9 @@
 """Load the starter set of pages from seed_pages.json into the database.
 
-These pages are hand-picked, so they're stored as approved right away.
+These pages are hand-picked, so they're stored as approved right away. They're
+interactive sites (tools, simulations, games, visualizations), Hop's main
+kind; each entry's "kind" says so. Run make check-embeds afterwards to find
+out which of them can be shown inside Hop.
 
 Safe to run more than once: pages that already exist (same URL) are skipped.
 
@@ -48,6 +51,7 @@ async def seed() -> None:
                     source="seed",
                     title=entry["title"],
                     summary=entry["summary"],
+                    kind=entry.get("kind", "article"),
                     topics=[topics_by_slug[slug] for slug in entry["topics"]],
                     # Hand-picked, so they skip review
                     status="approved",

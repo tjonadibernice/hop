@@ -122,10 +122,12 @@ async def candidate_pages(
     taste: list[float] | None,
     limit: int = CANDIDATES,
     exclude: Collection[uuid.UUID] = (),
+    kind: str | None = None,
 ) -> list[Page]:
     """Approved, unseen pages in the topic: closest to the taste, or best quality first.
 
     exclude: pages to skip even though they're unseen (already picked or queued).
+    kind: only pages of this kind ("interactive" or "article"); None: any.
     """
     seen = select(Interaction.page_id).where(Interaction.user_id == user_id)
     in_topic = select(page_topics.c.page_id).where(page_topics.c.topic_id == topic_id)
@@ -139,6 +141,8 @@ async def candidate_pages(
     )
     if exclude:
         query = query.where(Page.id.not_in(list(exclude)))
+    if kind is not None:
+        query = query.where(Page.kind == kind)
     if taste is not None:
         # <=> in SQL: cosine distance, served by the HNSW index
         query = query.where(Page.embedding.is_not(None)).order_by(
@@ -173,6 +177,7 @@ async def recommend_many(
     now: datetime,
     count: int,
     exclude: Collection[uuid.UUID] = (),
+    kind: str | None = None,
 ) -> list[Page]:
     """Up to `count` different pages, picked one after another.
 
@@ -197,12 +202,12 @@ async def recommend_many(
         page = None
         for topic_id in topic_order(counts, rng):
             candidates = await candidate_pages(
-                session, user_id, topic_id, taste, exclude=skip
+                session, user_id, topic_id, taste, exclude=skip, kind=kind
             )
             if not candidates and taste is not None:
                 # Pages without embeddings yet (e.g. not backfilled) still count
                 candidates = await candidate_pages(
-                    session, user_id, topic_id, None, exclude=skip
+                    session, user_id, topic_id, None, exclude=skip, kind=kind
                 )
             if candidates:
                 page = choose(candidates, rng)

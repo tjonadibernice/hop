@@ -62,11 +62,11 @@ Fonts load from Google Fonts. Text colors meet WCAG AA contrast in both modes, e
 
 Nothing happens until the user presses **Hop**, which calls `POST /hop`. Every hop is recorded as a view, so pages never load on their own. The **Dislike**, **Hop**, and **Like** buttons sit in a dock that floats at the bottom of the screen, so they're always in the same place, even on a phone.
 
-| API response      | What the screen shows                                                                                                                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `200` with a page | A card with the site, a **Picked for you** or **Random find** badge (from the response's `strategy`), title, summary, and topic chips (colored by the first topic), an "Open in new tab" link, and the page itself |
-| `409`             | "Pick your interests first", with a link to `/interests`                                                                                                                                                           |
-| `404`             | "You've seen it all (for now)", with a link to add more interests                                                                                                                                                  |
+| API response      | What the screen shows                                                                                                                                                                                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `200` with a page | A card with the site, a **Picked for you** or **Random find** badge (from the response's `strategy`), a yellow **Try it** badge for interactive pages (`kind`), title, summary, and topic chips (colored by the first topic), an "Open in new tab" link, and the page itself |
+| `409`             | "Pick your interests first", with a link to `/interests`                                                                                                                                                                                                                     |
+| `404`             | "You've seen it all (for now)", with a link to add more interests                                                                                                                                                                                                            |
 
 Before the first hop, the screen shows a welcome message with the user's topics as stickers.
 
@@ -94,7 +94,7 @@ Log in, Sign up, and Confirm email share `AuthShell`: a short pitch on one side 
 
 Users whose email is in the backend's `ADMIN_EMAILS` see a **Review** link (`user.is_admin` from `GET /auth/me`). Hiding the link isn't security: every `/admin/...` call is checked again by the server, which answers `403` to anyone else.
 
-- **The list** shows the pages the curator handed to a person ("Waiting for you"), or everything under review. The search box finds any page by URL or title, including live ones.
+- **The list** shows the pages the curator handed to a person ("Waiting for you"), or everything under review, each marked Interactive or Article. The search box finds any page by URL or title, including live ones.
 - **The detail panel** shows the page's summary and status, the curator's review (what it proposed, which guardrail blocked it, its reason, quality, and provider), every tool call it made with the result, and the stored text.
 - **Actions:**
   - **Approve:** the topic boxes start with the curator's choice; pick 1–3.

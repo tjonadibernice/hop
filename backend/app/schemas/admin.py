@@ -50,6 +50,7 @@ class AdminPageSummary(BaseModel):
     url: str
     site: str | None
     title: str
+    kind: str
     status: str
     status_reason: str | None
     quality_score: float | None

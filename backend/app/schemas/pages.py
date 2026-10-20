@@ -13,6 +13,8 @@ class PageResponse(BaseModel):
     url: str
     title: str
     summary: str | None
+    # "interactive" (a tool, simulation, game, ...) or "article"
+    kind: str
     embeddable: bool | None
     topics: list[TopicResponse]
 

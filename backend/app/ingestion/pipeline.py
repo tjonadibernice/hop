@@ -14,9 +14,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ingestion.discovery import MAX_STORED_LINKS
-from app.ingestion.extract import article_links, extract_article
+from app.ingestion.extract import article_links
 from app.ingestion.fetch import FetchError, RobotsDisallowedError, SafeFetcher
+from app.ingestion.interactive import (
+    INTERACTIVE,
+    MIN_ARTICLE_WORDS,
+    Unreadable,
+    read_page,
+)
 from app.ingestion.network import HostNotFoundError, UnsafeUrlError
+from app.ingestion.safety import is_excluded
 from app.ingestion.simhash import (
     NEAR_DUPLICATE_DISTANCE,
     band_keys,
@@ -32,7 +39,7 @@ from app.services.embeds import allows_framing
 logger = logging.getLogger(__name__)
 
 MAX_PAGE_BYTES = 2_000_000
-MIN_WORDS = 200
+MIN_WORDS = MIN_ARTICLE_WORDS  # for articles; interactive pages need less
 HTML_TYPES = ("text/html", "application/xhtml+xml")
 RETRY_DELAYS_SECONDS = (10, 60)  # wait before the 2nd and 3rd attempts
 
@@ -42,6 +49,7 @@ class Outcome(StrEnum):
     DUPLICATE = "duplicate"
     NEAR_DUPLICATE = "near_duplicate"
     INVALID_URL = "invalid_url"
+    EXCLUDED_SITE = "excluded_site"
     UNSAFE_URL = "unsafe_url"
     BLOCKED_BY_ROBOTS = "blocked_by_robots"
     FETCH_FAILED = "fetch_failed"
@@ -120,6 +128,8 @@ async def ingest_url(
         canonical = canonicalize_url(url)
     except InvalidUrlError as error:
         return IngestResult(Outcome.INVALID_URL, url, detail=str(error))
+    if is_excluded(canonical):
+        return IngestResult(Outcome.EXCLUDED_SITE, url)
     if await _canonical_exists(session, canonical):
         return IngestResult(Outcome.DUPLICATE, url)
 
@@ -146,26 +156,30 @@ async def ingest_url(
     if content_type not in HTML_TYPES:
         return IngestResult(Outcome.NOT_HTML, url, detail=content_type or None)
 
-    article = extract_article(fetched.body, fetched.url)
-    if article is None:
-        return IngestResult(Outcome.NO_CONTENT, url)
-    if article.word_count < MIN_WORDS:
-        return IngestResult(
-            Outcome.TOO_SHORT, url, detail=f"{article.word_count} words"
-        )
+    if is_excluded(fetched.url):  # redirected to an excluded site
+        return IngestResult(Outcome.EXCLUDED_SITE, url)
+    try:
+        page_read = read_page(fetched.body, fetched.url)
+    except Unreadable as error:
+        return IngestResult(Outcome(error.reason), url, detail=error.detail)
 
     # Redirects or a canonical link can reveal a page we already have
-    final_canonical = _choose_canonical(fetched.url, article.canonical_url)
+    final_canonical = _choose_canonical(fetched.url, page_read.canonical_url)
     if final_canonical != canonical and await _canonical_exists(
         session, final_canonical
     ):
         return IngestResult(Outcome.DUPLICATE, url)
 
-    fingerprint = simhash(article.text)
+    fingerprint = simhash(page_read.text)
     keys = band_keys(fingerprint)
-    original = await _find_near_duplicate(session, fingerprint, keys)
-    if original is not None:
-        return IngestResult(Outcome.NEAR_DUPLICATE, url, detail=f"same as {original}")
+    # An interactive page's short profile isn't enough to call two pages
+    # copies of each other (tools on one site share a lot of wording)
+    if page_read.kind != INTERACTIVE:
+        original = await _find_near_duplicate(session, fingerprint, keys)
+        if original is not None:
+            return IngestResult(
+                Outcome.NEAR_DUPLICATE, url, detail=f"same as {original}"
+            )
 
     page = Page(
         url=fetched.url,
@@ -174,9 +188,10 @@ async def ingest_url(
         source=source,
         depth=depth,
         outlinks=article_links(fetched.body, fetched.url)[:MAX_STORED_LINKS],
-        title=(article.title or final_canonical)[:300],
-        content=article.text,
-        word_count=article.word_count,
+        title=(page_read.title or final_canonical)[:300],
+        kind=page_read.kind,
+        content=page_read.text,
+        word_count=page_read.word_count,
         simhash=to_signed(fingerprint),
         simhash_bands=keys,
         embeddable=allows_framing(fetched.headers),

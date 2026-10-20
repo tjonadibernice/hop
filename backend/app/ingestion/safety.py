@@ -33,6 +33,21 @@ def load_blocklist(path: Path = BLOCKLIST_FILE) -> frozenset[str]:
     return frozenset(line for line in lines if line and not line.startswith("#"))
 
 
+EXCLUDED_SITES_FILE = Path(__file__).with_name("excluded_sites.txt")
+
+
+def is_excluded(url: str, excluded: frozenset[str] | None = None) -> bool:
+    """True for a page on a site Hop never collects (excluded_sites.txt).
+
+    Unlike the blocklist, these sites aren't unsafe; they're just not what
+    Hop is for, so their pages are never stored at all.
+    """
+    host = urlsplit(url).hostname
+    if host is None:
+        return False
+    return is_blocked(host, EXCLUDED_SITES if excluded is None else excluded)
+
+
 def is_blocked(host: str, blocklist: frozenset[str]) -> bool:
     """True for a listed domain and all its subdomains (a.bad.example -> bad.example)."""
     parts = host.lower().rstrip(".").split(".")
@@ -92,3 +107,6 @@ class SafetyChecker:
                 reason=f"Safe Browsing: {', '.join(threat_types)}",
             )
         return SafetyResult(safe=True, checked=True)
+
+
+EXCLUDED_SITES = load_blocklist(EXCLUDED_SITES_FILE)

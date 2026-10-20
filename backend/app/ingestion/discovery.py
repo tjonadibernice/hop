@@ -20,7 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
-from app.ingestion.safety import is_blocked
+from app.ingestion.safety import EXCLUDED_SITES, is_blocked
 from app.ingestion.urls import InvalidUrlError, canonicalize_url, site_of
 from app.models import Page
 
@@ -89,6 +89,7 @@ def choose_links(
             or canonical in chosen
             or extension in SKIP_EXTENSIONS
             or is_blocked(site, SKIP_SITES)
+            or is_blocked(site, EXCLUDED_SITES)
             or is_blocked(site, blocklist)
             or per_site.get(site, 0) >= MAX_LINKS_PER_SITE_PER_PAGE
         ):

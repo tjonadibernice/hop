@@ -5,7 +5,11 @@
 # or open the page source and search for "application/rss+xml" or
 # "application/atom+xml". Common addresses: /feed, /rss, /atom.xml, /index.xml.
 #
-# Examples (check they still work before turning them on):
+# Hacker News "Show HN" posts with 100+ points: projects people built, many of
+# them interactive tools, games, and visualizations (via hnrss.org)
+https://hnrss.org/show?points=100
+
+# More examples (check they still work before turning them on):
 # https://jvns.ca/atom.xml
 # https://martinfowler.com/feed.atom
 # https://simonwillison.net/atom/everything/

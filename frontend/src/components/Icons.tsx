@@ -121,3 +121,13 @@ export function ShuffleIcon({ size = 14 }: IconProps) {
     </Svg>
   );
 }
+
+/** A hand-tap cursor: marks interactive pages ("Try it"). */
+export function TapIcon({ size = 14 }: IconProps) {
+  return (
+    <Svg size={size}>
+      <path d="M9 11V5a2 2 0 0 1 4 0v5" />
+      <path d="M13 10a2 2 0 0 1 4 0v1a2 2 0 0 1 4 0v4a7 7 0 0 1-7 7h-1a7 7 0 0 1-6-3.5L4.5 15a2 2 0 0 1 3.4-2.1L9 14.5" />
+    </Svg>
+  );
+}

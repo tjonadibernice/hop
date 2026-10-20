@@ -1,0 +1,9 @@
+# Sites Hop never collects. Not unsafe (that's blocked_domains.txt), just not
+# what Hop is for: Hop finds pages people wouldn't come across on their own,
+# and these are where everyone already lands. Subdomains are included, so
+# wikipedia.org covers en.wikipedia.org, en.m.wikipedia.org, and so on.
+# One domain per line. After adding one, run make exclude-sites to take
+# pages already in the library out of Hop.
+
+wikipedia.org
+wikiwand.com

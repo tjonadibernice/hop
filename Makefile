@@ -1,4 +1,4 @@
-.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links poll-feeds embed ab-report loadtest curate eval-curator image integration check test-db
+.PHONY: up down api web lint test build format format-check install migrate migration seed check-embeds worker scheduler ingest enrich check-links poll-feeds embed ab-report loadtest curate eval-curator exclude-sites image integration check test-db
 
 up:
 	docker compose up -d
@@ -56,6 +56,10 @@ ab-report:
 
 curate:
 	cd backend && uv run python -m scripts.curate_pages
+
+# Take pages from the sites in backend/app/ingestion/excluded_sites.txt out of Hop
+exclude-sites:
+	cd backend && uv run python -m scripts.exclude_sites
 
 # Options go in args, e.g.: make eval-curator args="--tag injection --repeat 3"
 eval-curator:

@@ -17,10 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.ai.untrusted import fence, injection_signals
-from app.ingestion.extract import extract_article
 from app.ingestion.fetch import FetchError, RobotsDisallowedError, SafeFetcher
+from app.ingestion.interactive import INTERACTIVE, Unreadable, read_page
 from app.ingestion.network import HostNotFoundError, UnsafeUrlError
-from app.ingestion.pipeline import HTML_TYPES, MAX_PAGE_BYTES, MIN_WORDS
+from app.ingestion.pipeline import HTML_TYPES, MAX_PAGE_BYTES
 from app.ingestion.safety import SafetyChecker, SafetyCheckError, SafetyResult
 from app.ingestion.simhash import from_signed, hamming_distance, simhash
 from app.ingestion.urls import site_of
@@ -121,6 +121,7 @@ class PageFacts:
     simhash: int | None
     embedding: list[float] | None
     topics: list[str] = field(default_factory=list)
+    kind: str = "article"  # or "interactive": then content is a profile
 
     @property
     def site(self) -> str:
@@ -139,6 +140,7 @@ class PageFacts:
             simhash=page.simhash,
             embedding=list(page.embedding) if page.embedding is not None else None,
             topics=[topic.slug for topic in page.topics],
+            kind=page.kind,
         )
 
 
@@ -318,15 +320,19 @@ class CuratorToolbox:
         )
         if content_type not in HTML_TYPES:
             return live_page_report(facts + [f"not HTML ({content_type or 'unknown'})"])
-        article = extract_article(fetched.body, fetched.url)
-        if article is None or article.word_count < MIN_WORDS:
-            return live_page_report(facts + ["no readable article"])
+        try:
+            page_read = read_page(fetched.body, fetched.url)
+        except Unreadable:
+            return live_page_report(facts + ["no readable content"])
 
-        self.injection_signals = injection_signals(article.text)
-        facts.append(f"{article.word_count} words")
+        self.injection_signals = injection_signals(page_read.text)
+        if page_read.kind == INTERACTIVE:
+            facts.append(f"interactive page ({page_read.signals.summary()})")
+        else:
+            facts.append(f"{page_read.word_count} words")
         if self.page.simhash is not None:
             changed = hamming_distance(
-                simhash(article.text), from_signed(self.page.simhash)
+                simhash(page_read.text), from_signed(self.page.simhash)
             )
             facts.append(f"text differs from the stored copy by {changed} of 64 bits")
-        return live_page_report(facts, article.text)
+        return live_page_report(facts, page_read.text)

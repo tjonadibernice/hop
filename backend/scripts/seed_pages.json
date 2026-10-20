@@ -1,47 +1,474 @@
 [
-  {"url": "https://en.wikipedia.org/wiki/Pomodoro_Technique", "title": "Pomodoro Technique", "summary": "Work in focused 25-minute blocks separated by short breaks.", "topics": ["productivity-focus"]},
-  {"url": "https://en.wikipedia.org/wiki/Getting_Things_Done", "title": "Getting Things Done", "summary": "David Allen's method for capturing tasks so your mind can focus.", "topics": ["productivity-focus"]},
-  {"url": "https://en.wikipedia.org/wiki/Flow_(psychology)", "title": "Flow (psychology)", "summary": "The state of full, energized focus and how to get into it.", "topics": ["productivity-focus"]},
-  {"url": "https://en.wikipedia.org/wiki/Spaced_repetition", "title": "Spaced repetition", "summary": "Reviewing material at growing intervals to remember it longer.", "topics": ["learning-how-to-learn"]},
-  {"url": "https://en.wikipedia.org/wiki/Testing_effect", "title": "Testing effect", "summary": "Why recalling information beats rereading it.", "topics": ["learning-how-to-learn"]},
-  {"url": "https://en.wikipedia.org/wiki/Forgetting_curve", "title": "Forgetting curve", "summary": "How quickly memories fade without review.", "topics": ["learning-how-to-learn"]},
-  {"url": "https://en.wikipedia.org/wiki/Zettelkasten", "title": "Zettelkasten", "summary": "A note-taking system of small, linked notes.", "topics": ["note-taking-knowledge-management"]},
-  {"url": "https://en.wikipedia.org/wiki/Cornell_Notes", "title": "Cornell Notes", "summary": "A page layout for taking and reviewing lecture notes.", "topics": ["note-taking-knowledge-management"]},
-  {"url": "https://en.wikipedia.org/wiki/Personal_knowledge_management", "title": "Personal knowledge management", "summary": "How individuals collect, organize, and use what they learn.", "topics": ["note-taking-knowledge-management"]},
-  {"url": "https://en.wikipedia.org/wiki/Habit", "title": "Habit", "summary": "What habits are and how they form.", "topics": ["habits-routines"]},
-  {"url": "https://en.wikipedia.org/wiki/Procrastination", "title": "Procrastination", "summary": "Why we delay tasks, and what research says about it.", "topics": ["habits-routines"]},
-  {"url": "https://en.wikipedia.org/wiki/Circadian_rhythm", "title": "Circadian rhythm", "summary": "The body's daily clock and how it shapes energy.", "topics": ["habits-routines"]},
-  {"url": "https://en.wikipedia.org/wiki/Mental_model", "title": "Mental model", "summary": "Internal explanations of how things work.", "topics": ["mental-models-decision-making"]},
-  {"url": "https://en.wikipedia.org/wiki/Cognitive_bias", "title": "Cognitive bias", "summary": "Systematic patterns of irrational judgment.", "topics": ["mental-models-decision-making"]},
-  {"url": "https://en.wikipedia.org/wiki/First_principle", "title": "First principle", "summary": "Reasoning from basic truths instead of analogy.", "topics": ["mental-models-decision-making"]},
-  {"url": "https://en.wikipedia.org/wiki/Plain_language", "title": "Plain language", "summary": "Writing so readers understand it the first time.", "topics": ["writing-communication"]},
-  {"url": "https://en.wikipedia.org/wiki/Inverted_pyramid_(journalism)", "title": "Inverted pyramid", "summary": "Putting the most important information first.", "topics": ["writing-communication"]},
-  {"url": "https://en.wikipedia.org/wiki/Technical_writing", "title": "Technical writing", "summary": "Explaining complex topics clearly for a specific audience.", "topics": ["writing-communication"]},
-  {"url": "https://en.wikipedia.org/wiki/Design_Patterns", "title": "Design Patterns", "summary": "The classic book of reusable object-oriented designs.", "topics": ["programming-software-engineering"]},
-  {"url": "https://en.wikipedia.org/wiki/Code_review", "title": "Code review", "summary": "How and why teams review each other's code.", "topics": ["programming-software-engineering"]},
-  {"url": "https://en.wikipedia.org/wiki/Technical_debt", "title": "Technical debt", "summary": "The future cost of choosing a quick solution now.", "topics": ["programming-software-engineering"]},
-  {"url": "https://en.wikipedia.org/wiki/Big_O_notation", "title": "Big O notation", "summary": "Describing how running time grows with input size.", "topics": ["computer-science-fundamentals"]},
-  {"url": "https://en.wikipedia.org/wiki/Hash_table", "title": "Hash table", "summary": "The data structure behind fast lookups.", "topics": ["computer-science-fundamentals"]},
-  {"url": "https://en.wikipedia.org/wiki/Binary_search_algorithm", "title": "Binary search", "summary": "Finding an item in sorted data by halving the search space.", "topics": ["computer-science-fundamentals"]},
-  {"url": "https://en.wikipedia.org/wiki/Machine_learning", "title": "Machine learning", "summary": "How computers learn patterns from data.", "topics": ["ai-machine-learning"]},
-  {"url": "https://en.wikipedia.org/wiki/Large_language_model", "title": "Large language model", "summary": "The models behind modern AI assistants.", "topics": ["ai-machine-learning"]},
-  {"url": "https://en.wikipedia.org/wiki/Gradient_descent", "title": "Gradient descent", "summary": "The optimization method that trains most neural networks.", "topics": ["ai-machine-learning"]},
-  {"url": "https://en.wikipedia.org/wiki/Defense_in_depth_(computing)", "title": "Defense in depth", "summary": "Layering security controls so one failure isn't fatal.", "topics": ["cybersecurity"]},
-  {"url": "https://en.wikipedia.org/wiki/Phishing", "title": "Phishing", "summary": "How attackers trick people into giving up secrets.", "topics": ["cybersecurity"]},
-  {"url": "https://en.wikipedia.org/wiki/Public-key_cryptography", "title": "Public-key cryptography", "summary": "The math behind HTTPS, SSH, and digital signatures.", "topics": ["cybersecurity"]},
-  {"url": "https://en.wikipedia.org/wiki/Transmission_Control_Protocol", "title": "Transmission Control Protocol", "summary": "How TCP delivers data reliably over the internet.", "topics": ["networking-linux"]},
-  {"url": "https://en.wikipedia.org/wiki/Domain_Name_System", "title": "Domain Name System", "summary": "How names like example.com become IP addresses.", "topics": ["networking-linux"]},
-  {"url": "https://en.wikipedia.org/wiki/Unix_philosophy", "title": "Unix philosophy", "summary": "Small programs that do one thing well and work together.", "topics": ["networking-linux"]},
-  {"url": "https://en.wikipedia.org/wiki/Continuous_integration", "title": "Continuous integration", "summary": "Merging and testing code changes automatically and often.", "topics": ["cloud-devops"]},
-  {"url": "https://en.wikipedia.org/wiki/Infrastructure_as_code", "title": "Infrastructure as code", "summary": "Managing servers and cloud resources with versioned files.", "topics": ["cloud-devops"]},
-  {"url": "https://en.wikipedia.org/wiki/Docker_(software)", "title": "Docker", "summary": "Packaging apps and their dependencies into containers.", "topics": ["cloud-devops"]},
-  {"url": "https://en.wikipedia.org/wiki/Database_normalization", "title": "Database normalization", "summary": "Structuring tables to avoid duplicated data.", "topics": ["data-databases"]},
-  {"url": "https://en.wikipedia.org/wiki/ACID", "title": "ACID", "summary": "The guarantees that make database transactions reliable.", "topics": ["data-databases"]},
-  {"url": "https://en.wikipedia.org/wiki/SQL", "title": "SQL", "summary": "The language for querying relational databases.", "topics": ["data-databases"]},
-  {"url": "https://en.wikipedia.org/wiki/Impostor_syndrome", "title": "Impostor syndrome", "summary": "Doubting your skills despite evidence of success.", "topics": ["career-growth-in-tech"]},
-  {"url": "https://en.wikipedia.org/wiki/Mentorship", "title": "Mentorship", "summary": "How mentoring relationships help people grow.", "topics": ["career-growth-in-tech"]},
-  {"url": "https://en.wikipedia.org/wiki/Peter_principle", "title": "Peter principle", "summary": "Why people get promoted to roles they struggle in.", "topics": ["career-growth-in-tech"]},
-  {"url": "https://en.wikipedia.org/wiki/Second-language_acquisition", "title": "Second-language acquisition", "summary": "How people learn a language after their first.", "topics": ["language-learning"]},
-  {"url": "https://en.wikipedia.org/wiki/Language_immersion", "title": "Language immersion", "summary": "Learning a language by using it for everything.", "topics": ["language-learning"]},
-  {"url": "https://en.wikipedia.org/wiki/Input_hypothesis", "title": "Input hypothesis", "summary": "Krashen's idea that we learn languages from input we can mostly understand.", "topics": ["language-learning"]}
+  {
+    "url": "https://pomofocus.io/",
+    "title": "Pomofocus",
+    "summary": "A Pomodoro timer with a task list: set work and break lengths, then track your focused sessions.",
+    "topics": [
+      "productivity-focus",
+      "habits-routines"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://mynoise.net/",
+    "title": "myNoise",
+    "summary": "Background-noise generators you tune with sliders to block distractions while you work.",
+    "topics": [
+      "productivity-focus"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://asoftmurmur.com/",
+    "title": "A Soft Murmur",
+    "summary": "Mix rain, waves, wind, and other ambient sounds into your own focus soundtrack.",
+    "topics": [
+      "productivity-focus"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://monkeytype.com/",
+    "title": "Monkeytype",
+    "summary": "A minimal typing test that measures your speed and accuracy as you type.",
+    "topics": [
+      "productivity-focus",
+      "learning-how-to-learn"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.keybr.com/",
+    "title": "Keybr",
+    "summary": "Adaptive touch-typing lessons that keep practicing the keys you miss most.",
+    "topics": [
+      "learning-how-to-learn",
+      "productivity-focus"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://ncase.me/remember/",
+    "title": "How to Remember Anything Forever-ish",
+    "summary": "An interactive comic about spaced repetition that lets you build your own review schedule.",
+    "topics": [
+      "learning-how-to-learn"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://explorabl.es/",
+    "title": "Explorable Explanations",
+    "summary": "A hub of interactive explainers that teach by letting you play with the ideas.",
+    "topics": [
+      "learning-how-to-learn",
+      "mental-models-decision-making"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://seeing-theory.brown.edu/",
+    "title": "Seeing Theory",
+    "summary": "A visual introduction to probability and statistics, with simulations you can run in the browser.",
+    "topics": [
+      "data-databases",
+      "learning-how-to-learn"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://excalidraw.com/",
+    "title": "Excalidraw",
+    "summary": "A hand-drawn style whiteboard for sketching diagrams and visual notes.",
+    "topics": [
+      "note-taking-knowledge-management"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.tldraw.com/",
+    "title": "tldraw",
+    "summary": "A fast, free whiteboard for drawing diagrams and thinking on a canvas.",
+    "topics": [
+      "note-taking-knowledge-management"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://ncase.me/trust/",
+    "title": "The Evolution of Trust",
+    "summary": "An interactive guide to the game theory of why and how people learn to trust each other.",
+    "topics": [
+      "mental-models-decision-making"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://ncase.me/polygons/",
+    "title": "Parable of the Polygons",
+    "summary": "A playable story showing how small individual biases add up to large-scale segregation.",
+    "topics": [
+      "mental-models-decision-making"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://ncase.me/loopy/",
+    "title": "LOOPY",
+    "summary": "Draw circles and arrows to build a feedback-loop model, then watch the system play out.",
+    "topics": [
+      "mental-models-decision-making"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://ncase.me/crowds/",
+    "title": "The Wisdom and/or Madness of Crowds",
+    "summary": "An interactive explainer on how ideas and behaviors spread through networks of people.",
+    "topics": [
+      "mental-models-decision-making"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.complexity-explorables.org/",
+    "title": "Complexity Explorables",
+    "summary": "Interactive simulations of complex systems, from flocking birds to epidemics.",
+    "topics": [
+      "mental-models-decision-making",
+      "computer-science-fundamentals"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://hemingwayapp.com/",
+    "title": "Hemingway Editor",
+    "summary": "Paste your writing and see long sentences, passive voice, and complex words highlighted.",
+    "topics": [
+      "writing-communication"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.onelook.com/thesaurus/",
+    "title": "OneLook Thesaurus",
+    "summary": "Describe a concept and get the words that fit it: a reverse dictionary for writers.",
+    "topics": [
+      "writing-communication"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://regex101.com/",
+    "title": "regex101",
+    "summary": "Build and test regular expressions with live matching and a plain-language explanation of each part.",
+    "topics": [
+      "programming-software-engineering"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://regexcrossword.com/",
+    "title": "Regex Crossword",
+    "summary": "Crossword puzzles whose clues are regular expressions.",
+    "topics": [
+      "programming-software-engineering"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://learngitbranching.js.org/",
+    "title": "Learn Git Branching",
+    "summary": "Type real git commands and watch the commit graph change as you solve levels.",
+    "topics": [
+      "programming-software-engineering"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://flexboxfroggy.com/",
+    "title": "Flexbox Froggy",
+    "summary": "A game that teaches CSS flexbox by moving frogs onto lily pads.",
+    "topics": [
+      "programming-software-engineering"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://cssgridgarden.com/",
+    "title": "Grid Garden",
+    "summary": "A game that teaches CSS grid by watering a carrot garden.",
+    "topics": [
+      "programming-software-engineering"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.redblobgames.com/grids/hexagons/",
+    "title": "Hexagonal Grids",
+    "summary": "An interactive guide to hexagonal grid coordinates and algorithms for games.",
+    "topics": [
+      "programming-software-engineering",
+      "computer-science-fundamentals"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://ciechanow.ski/curves-and-surfaces/",
+    "title": "Curves and Surfaces",
+    "summary": "An interactive essay on Bezier curves and surfaces, with demos you drag to explore.",
+    "topics": [
+      "programming-software-engineering",
+      "computer-science-fundamentals"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://roadmap.sh/",
+    "title": "roadmap.sh",
+    "summary": "Interactive learning roadmaps for developer roles and technologies.",
+    "topics": [
+      "career-growth-in-tech",
+      "programming-software-engineering"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://visualgo.net/en",
+    "title": "VisuAlgo",
+    "summary": "Animated, step-by-step visualizations of data structures and algorithms.",
+    "topics": [
+      "computer-science-fundamentals"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.redblobgames.com/pathfinding/a-star/introduction.html",
+    "title": "Introduction to the A* Algorithm",
+    "summary": "An interactive explanation of breadth-first search, Dijkstra's algorithm, and A*.",
+    "topics": [
+      "computer-science-fundamentals"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://nandgame.com/",
+    "title": "NandGame",
+    "summary": "Build a computer from NAND gates up, one puzzle at a time.",
+    "topics": [
+      "computer-science-fundamentals"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.cs.usfca.edu/~galles/visualization/Algorithms.html",
+    "title": "Data Structure Visualizations",
+    "summary": "Animations of classic data structures and algorithms you can run with your own inputs.",
+    "topics": [
+      "computer-science-fundamentals"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://algorithm-visualizer.org/",
+    "title": "Algorithm Visualizer",
+    "summary": "Watch algorithms run line by line alongside their code.",
+    "topics": [
+      "computer-science-fundamentals",
+      "programming-software-engineering"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://playground.tensorflow.org/",
+    "title": "TensorFlow Playground",
+    "summary": "Train a small neural network in the browser and watch how layers and features change what it learns.",
+    "topics": [
+      "ai-machine-learning"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://poloclub.github.io/cnn-explainer/",
+    "title": "CNN Explainer",
+    "summary": "An interactive visualization of how a convolutional neural network classifies an image.",
+    "topics": [
+      "ai-machine-learning"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://poloclub.github.io/transformer-explainer/",
+    "title": "Transformer Explainer",
+    "summary": "Type a prompt and see how a GPT-style transformer predicts the next word, layer by layer.",
+    "topics": [
+      "ai-machine-learning"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://teachablemachine.withgoogle.com/",
+    "title": "Teachable Machine",
+    "summary": "Train an image, sound, or pose model with your webcam or microphone, no code needed.",
+    "topics": [
+      "ai-machine-learning"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://quickdraw.withgoogle.com/",
+    "title": "Quick, Draw!",
+    "summary": "Doodle while a neural network tries to guess what you're drawing.",
+    "topics": [
+      "ai-machine-learning"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://bbycroft.net/llm",
+    "title": "LLM Visualization",
+    "summary": "A 3D walk-through of every step inside a small large language model.",
+    "topics": [
+      "ai-machine-learning"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://gchq.github.io/CyberChef/",
+    "title": "CyberChef",
+    "summary": "Chain operations to encode, decode, encrypt, and analyze data in the browser.",
+    "topics": [
+      "cybersecurity"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.hacksplaining.com/lessons",
+    "title": "Hacksplaining",
+    "summary": "Interactive lessons where you exploit common web vulnerabilities, then learn to fix them.",
+    "topics": [
+      "cybersecurity",
+      "programming-software-engineering"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://jwt.io/",
+    "title": "JWT Debugger",
+    "summary": "Paste a JSON Web Token to decode it and check its signature.",
+    "topics": [
+      "cybersecurity"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://explainshell.com/",
+    "title": "explainshell",
+    "summary": "Paste a shell command and see each part matched to its manual page.",
+    "topics": [
+      "networking-linux"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.submarinecablemap.com/",
+    "title": "Submarine Cable Map",
+    "summary": "An interactive map of the undersea cables that carry the internet.",
+    "topics": [
+      "networking-linux"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://howdns.works/",
+    "title": "How DNS Works",
+    "summary": "An illustrated, step-by-step comic about what happens when you look up a domain.",
+    "topics": [
+      "networking-linux"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://crontab.guru/",
+    "title": "crontab guru",
+    "summary": "Type a cron schedule and read it back in plain English.",
+    "topics": [
+      "networking-linux",
+      "cloud-devops"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://killercoda.com/",
+    "title": "Killercoda",
+    "summary": "Hands-on Linux, Kubernetes, and DevOps scenarios in a real terminal in the browser.",
+    "topics": [
+      "cloud-devops",
+      "networking-linux"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://sqlbolt.com/",
+    "title": "SQLBolt",
+    "summary": "Interactive SQL lessons with exercises you solve in the browser.",
+    "topics": [
+      "data-databases"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://mystery.knightlab.com/",
+    "title": "The SQL Murder Mystery",
+    "summary": "Solve a murder case by writing SQL queries against the police database.",
+    "topics": [
+      "data-databases"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://selectstarsql.com/",
+    "title": "Select Star SQL",
+    "summary": "An interactive book that teaches SQL with a real dataset you query as you read.",
+    "topics": [
+      "data-databases"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.gapminder.org/tools/",
+    "title": "Gapminder Tools",
+    "summary": "Animated charts of world development data you can explore over time.",
+    "topics": [
+      "data-databases"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://www.levels.fyi/",
+    "title": "Levels.fyi",
+    "summary": "Compare tech salaries and career levels across companies.",
+    "topics": [
+      "career-growth-in-tech"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://lyricstraining.com/",
+    "title": "LyricsTraining",
+    "summary": "Learn a language by filling in the missing lyrics of music videos.",
+    "topics": [
+      "language-learning"
+    ],
+    "kind": "interactive"
+  },
+  {
+    "url": "https://forvo.com/",
+    "title": "Forvo",
+    "summary": "Hear words pronounced by native speakers in hundreds of languages.",
+    "topics": [
+      "language-learning"
+    ],
+    "kind": "interactive"
+  }
 ]

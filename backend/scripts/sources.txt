@@ -2,9 +2,24 @@
 # Queue them with:  make ingest   (or make ingest f=path/to/your-list.txt)
 # New pages are stored as "pending" and aren't shown by Hop until approved.
 
+# Interactive pages (Hop's main kind)
+https://samwho.dev/load-balancing/
+https://samwho.dev/hashing/
+https://samwho.dev/bloom-filters/
+https://samwho.dev/memory-allocation/
+https://setosa.io/ev/markov-chains/
+https://setosa.io/ev/principal-component-analysis/
+https://distill.pub/2017/momentum/
+https://distill.pub/2016/misread-tsne/
+https://ncase.me/sight-and-light/
+https://www.redblobgames.com/articles/visibility/
+https://ciechanow.ski/color-spaces/
+https://immersivemath.com/ila/index.html
+https://jackschaedler.github.io/circles-sines-signals/
+
+# Articles
 https://12factor.net/
 https://martinfowler.com/articles/microservices.html
 https://www.joelonsoftware.com/2000/08/09/the-joel-test-12-steps-to-better-code/
 https://paulgraham.com/greatwork.html
 https://sre.google/sre-book/eliminating-toil/
-https://en.wikipedia.org/wiki/Spaced_repetition

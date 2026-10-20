@@ -216,7 +216,8 @@ export default function ReviewPage() {
                     <span className="review-item-title">{page.title}</span>
                     <span className="review-item-meta">
                       {page.site ?? new URL(page.url).hostname} ·{" "}
-                      {STATUS_LABELS[page.status]}
+                      {page.kind === "interactive" ? "Interactive" : "Article"}{" "}
+                      · {STATUS_LABELS[page.status]}
                     </span>
                     {page.latest_review && (
                       <span className="review-item-meta">

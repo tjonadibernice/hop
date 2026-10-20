@@ -10,6 +10,7 @@ import {
   HopArrow,
   ShuffleIcon,
   StarIcon,
+  TapIcon,
   ThumbDownIcon,
 } from "../components/Icons";
 import TopicChips from "../components/TopicChips";
@@ -218,6 +219,12 @@ function PageView({ page, onRemoved }: { page: Hop; onRemoved: () => void }) {
                 </>
               )}
             </p>
+            {page.kind === "interactive" && (
+              <p className="kind-badge">
+                <TapIcon />
+                Try it
+              </p>
+            )}
           </div>
           <h1>{page.title}</h1>
           {page.summary && <p className="summary">{page.summary}</p>}

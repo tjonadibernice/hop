@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # random picks. 0 turns the recommender off; 100 gives it to everyone.
     recommender_percent: int = 50
 
+    # The share of hops (0-100) that are interactive pages (tools, simulations,
+    # games, visualizations); the rest are articles. When one kind runs out
+    # for a user, the other fills in.
+    interactive_percent: int = 70
+
     # Serve hops from each user's precomputed Redis queue (filled by the
     # worker). False picks every page while the user waits, which is slower;
     # it's there for comparisons like the load test.

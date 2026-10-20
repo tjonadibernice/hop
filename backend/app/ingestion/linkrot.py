@@ -26,10 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from app.ingestion.discovery import MAX_STORED_LINKS
-from app.ingestion.extract import article_links, extract_article
+from app.ingestion.extract import article_links
 from app.ingestion.fetch import FetchError, RobotsDisallowedError, SafeFetcher
+from app.ingestion.interactive import Unreadable, read_page
 from app.ingestion.network import HostNotFoundError, UnsafeUrlError
-from app.ingestion.pipeline import HTML_TYPES, MAX_PAGE_BYTES, MIN_WORDS
+from app.ingestion.pipeline import HTML_TYPES, MAX_PAGE_BYTES
 from app.ingestion.simhash import (
     band_keys,
     from_signed,
@@ -153,11 +154,12 @@ async def _check(
     content_type = fetched.headers.get("content-type", "").split(";")[0].strip().lower()
     if content_type not in HTML_TYPES:
         return _failed(page, now, f"not HTML ({content_type or 'unknown'})")
-    article = extract_article(fetched.body, fetched.url)
-    if article is None or article.word_count < MIN_WORDS:
-        return _failed(page, now, "no readable article")
+    try:
+        page_read = read_page(fetched.body, fetched.url)
+    except Unreadable:
+        return _failed(page, now, "no readable content")
 
-    fingerprint = simhash(article.text)
+    fingerprint = simhash(page_read.text)
     if page.simhash is not None:
         distance = hamming_distance(fingerprint, from_signed(page.simhash))
         if distance > CONTENT_CHANGED_DISTANCE:

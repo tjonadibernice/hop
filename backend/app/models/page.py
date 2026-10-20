@@ -26,6 +26,12 @@ from app.models.topic import Topic
 # dead: an approved page that stopped working.
 PAGE_STATUSES = ("pending", "approved", "rejected", "needs_review", "dead")
 
+# article: something to read. interactive: a tool, simulation, game,
+# visualization, or playground (see ingestion/interactive.py)
+ARTICLE = "article"
+INTERACTIVE = "interactive"
+PAGE_KINDS = (ARTICLE, INTERACTIVE)
+
 # voyage-4-lite's default size. Changing it means re-embedding every page.
 EMBEDDING_DIMENSIONS = 1024
 
@@ -37,7 +43,10 @@ class Page(Base):
             "status IN ('pending', 'approved', 'rejected', 'needs_review', 'dead')",
             name="status",
         ),
+        CheckConstraint("kind IN ('article', 'interactive')", name="kind"),
         Index("ix_pages_status", "status"),
+        # Hops pick from approved pages of one kind at a time
+        Index("ix_pages_status_kind", "status", "kind"),
         Index("ix_pages_next_check_at", "next_check_at"),
         Index("ix_pages_site", "site"),
         # GIN index: finds rows whose array shares any element with a given array
@@ -63,6 +72,9 @@ class Page(Base):
     title: Mapped[str] = mapped_column(String(300))
     summary: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), server_default=text("'pending'"))
+    kind: Mapped[str] = mapped_column(
+        String(16), default="article", server_default=text("'article'")
+    )
     # Why the page got its status, e.g. "low quality (0.21)"
     status_reason: Mapped[str | None] = mapped_column(String(300))
     # Whether other sites may show this page in an iframe.

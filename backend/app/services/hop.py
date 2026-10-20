@@ -1,5 +1,6 @@
 import random
 import uuid
+from collections import deque
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from app.config import settings
 from app.models import Interaction, Page, page_topics, user_interests
+from app.models.page import ARTICLE, INTERACTIVE
 from app.services import hop_queue
 from app.services.experiments import RECOMMENDER, assigned_strategy
 from app.services.hop_queue import QueuedPick
@@ -154,6 +156,21 @@ async def refill_queue(
     return len(pages)
 
 
+def page_kinds(
+    count: int, rng: random.Random, interactive_percent: int | None = None
+) -> list[str]:
+    """The kind each of the next `count` hops should be, drawn independently,
+    so about interactive_percent of them are interactive."""
+    percent = (
+        settings.interactive_percent
+        if interactive_percent is None
+        else interactive_percent
+    )
+    return [
+        INTERACTIVE if rng.random() * 100 < percent else ARTICLE for _ in range(count)
+    ]
+
+
 async def _pick(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -162,11 +179,55 @@ async def _pick(
     count: int,
     exclude: Collection[uuid.UUID] = (),
 ) -> list[Page]:
+    """Up to `count` pages, mixing interactive pages and articles.
+
+    Each slot gets a kind (see page_kinds). Each kind is picked in one batch
+    by the user's strategy; when a kind runs short (the user has seen them
+    all, or the library has few), any page fills the gap, so the mix never
+    stops a user from hopping.
+    """
+    kinds = page_kinds(count, rng)
+    skip = set(exclude)
+    pools: dict[str, deque[Page]] = {}
+    for kind in (INTERACTIVE, ARTICLE):
+        wanted = kinds.count(kind)
+        if wanted:
+            pages = await _pick_kind(
+                session, user_id, strategy, rng, wanted, skip, kind
+            )
+            skip.update(page.id for page in pages)
+            pools[kind] = deque(pages)
+    shortfall = count - sum(len(pool) for pool in pools.values())
+    spare = deque(
+        await _pick_kind(session, user_id, strategy, rng, shortfall, skip, None)
+        if shortfall
+        else []
+    )
+
+    picked = []
+    for kind in kinds:
+        other = ARTICLE if kind == INTERACTIVE else INTERACTIVE
+        for pool in (pools.get(kind), spare, pools.get(other)):
+            if pool:
+                picked.append(pool.popleft())
+                break
+    return picked
+
+
+async def _pick_kind(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    strategy: str,
+    rng: random.Random,
+    count: int,
+    exclude: Collection[uuid.UUID],
+    kind: str | None,
+) -> list[Page]:
     if strategy == RECOMMENDER:
         return await recommend_many(
-            session, user_id, rng, datetime.now(UTC), count, exclude
+            session, user_id, rng, datetime.now(UTC), count, exclude, kind
         )
-    return await random_pages(session, user_id, count, exclude)
+    return await random_pages(session, user_id, count, exclude, kind)
 
 
 async def random_page(session: AsyncSession, user_id: uuid.UUID) -> Page | None:
@@ -180,6 +241,7 @@ async def random_pages(
     user_id: uuid.UUID,
     count: int,
     exclude: Collection[uuid.UUID] = (),
+    kind: str | None = None,
 ) -> list[Page]:
     interest_topic_ids = select(user_interests.c.topic_id).where(
         user_interests.c.user_id == user_id
@@ -201,4 +263,6 @@ async def random_pages(
     )
     if exclude:
         query = query.where(Page.id.not_in(list(exclude)))
+    if kind is not None:
+        query = query.where(Page.kind == kind)
     return list(await session.scalars(query))
