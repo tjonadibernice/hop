@@ -1,6 +1,14 @@
+import asyncio
+import socket
+
 import pytest
 
-from app.ingestion.network import UnsafeUrlError, ensure_public_host, is_public_address
+from app.ingestion.network import (
+    HostNotFoundError,
+    UnsafeUrlError,
+    ensure_public_host,
+    is_public_address,
+)
 
 
 @pytest.mark.parametrize(
@@ -35,4 +43,50 @@ async def test_ensure_public_host_blocks_ip_literals():
         await ensure_public_host("127.0.0.1", 80)
     with pytest.raises(UnsafeUrlError):
         await ensure_public_host("169.254.169.254", 80)
-    await ensure_public_host("93.184.216.34", 443)
+    assert await ensure_public_host("93.184.216.34", 443) == "93.184.216.34"
+
+
+class FakeDns:
+    """Answers each lookup with the next list of addresses."""
+
+    def __init__(self, *answers: list[str]) -> None:
+        self.answers = list(answers)
+        self.lookups = 0
+
+    async def getaddrinfo(self, host, port, **_):
+        self.lookups += 1
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port))
+            for address in self.answers.pop(0)
+        ]
+
+
+@pytest.fixture
+def dns(monkeypatch):
+    def install(*answers):
+        fake = FakeDns(*answers)
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(loop, "getaddrinfo", fake.getaddrinfo)
+        return fake
+
+    return install
+
+
+async def test_the_checked_address_is_returned(dns):
+    dns(["93.184.216.34", "93.184.216.35"])
+
+    assert await ensure_public_host("example.org", 443) == "93.184.216.34"
+
+
+async def test_one_private_answer_is_enough_to_refuse(dns):
+    dns(["93.184.216.34", "10.0.0.5"])
+
+    with pytest.raises(UnsafeUrlError):
+        await ensure_public_host("rebind.test", 80)
+
+
+async def test_no_answer_means_no_host(dns):
+    dns([])
+
+    with pytest.raises(HostNotFoundError):
+        await ensure_public_host("empty.test", 80)

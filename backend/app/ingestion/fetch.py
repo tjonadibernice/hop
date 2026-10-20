@@ -2,7 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
 import httpx
@@ -18,7 +18,9 @@ ROBOTS_CACHE_SECONDS = 24 * 60 * 60
 ALLOW_ALL = ""
 DISALLOW_ALL = "User-agent: *\nDisallow: /"
 
-Resolver = Callable[[str, int], Awaitable[None]]
+# Checks a host and returns the address to connect to (None: let the HTTP
+# client resolve it, as in tests with a fake internet)
+Resolver = Callable[[str, int], Awaitable[str | None]]
 
 
 class FetchError(Exception):
@@ -42,6 +44,20 @@ class Fetched:
     body: bytes
 
 
+def pinned_request(url: str, address: str) -> tuple[str, dict[str, str], dict]:
+    """The URL, headers, and request extensions for fetching `url` from a
+    specific IP address: the URL points at the address, the Host header names
+    the site, and for HTTPS the TLS handshake (SNI and certificate check) still
+    uses the host name, so a certificate for the address alone won't pass."""
+    parts = urlsplit(url)
+    ip = f"[{address}]" if ":" in address else address
+    netloc = ip if parts.port is None else f"{ip}:{parts.port}"
+    pinned = urlunsplit(parts._replace(netloc=netloc))
+    host_header = parts.netloc.rsplit("@", 1)[-1]  # host[:port], no credentials
+    extensions = {"sni_hostname": parts.hostname} if parts.scheme == "https" else {}
+    return pinned, {"Host": host_header}, extensions
+
+
 def _host_and_port(url: str) -> tuple[str, int]:
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
@@ -59,7 +75,11 @@ class SafeFetcher:
         delay_seconds: float = 1.0,
         resolver: Resolver | None = ensure_public_host,
     ) -> None:
-        """resolver=None turns off the SSRF check; only for local testing."""
+        """resolver=None turns off the SSRF check; only for local testing.
+
+        The resolver's answer is the address the request connects to, so a
+        DNS server can't pass the check with one answer and send the
+        connection somewhere else with another (DNS rebinding)."""
         self.client = client
         self.redis = redis
         self.user_agent = user_agent
@@ -82,13 +102,14 @@ class SafeFetcher:
         current = url
         for _ in range(MAX_REDIRECTS + 1):
             host, port = _host_and_port(current)
+            address = None
             if self.resolver is not None:
-                await self.resolver(host, port)
+                address = await self.resolver(host, port)
             if check_robots and not await self.robots_allows(current):
                 raise RobotsDisallowedError(current)
             await wait_for_turn(self.redis, host, self.delay_seconds)
 
-            fetched = await self._request(current, max_bytes, headers or {})
+            fetched = await self._request(current, address, max_bytes, headers or {})
             location = fetched.headers.get("location")
             if fetched.status_code in REDIRECT_CODES and location:
                 current = urljoin(current, location)
@@ -97,11 +118,17 @@ class SafeFetcher:
         raise FetchError("too_many_redirects")
 
     async def _request(
-        self, url: str, max_bytes: int, headers: dict[str, str]
+        self, url: str, address: str | None, max_bytes: int, headers: dict[str, str]
     ) -> Fetched:
+        target, extra_headers, extensions = (
+            pinned_request(url, address) if address else (url, {}, {})
+        )
         try:
             async with self.client.stream(
-                "GET", url, headers={**headers, "User-Agent": self.user_agent}
+                "GET",
+                target,
+                headers={**headers, **extra_headers, "User-Agent": self.user_agent},
+                extensions=extensions,
             ) as response:
                 # Read in chunks and stop early, so a huge file can't fill memory
                 body = bytearray()
@@ -110,7 +137,7 @@ class SafeFetcher:
                     if len(body) > max_bytes:
                         raise FetchError("too_large")
                 return Fetched(
-                    str(response.url),
+                    url,  # the URL as the site knows it, not the pinned address
                     response.status_code,
                     response.headers,
                     bytes(body),

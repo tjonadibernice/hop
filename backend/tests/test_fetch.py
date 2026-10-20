@@ -3,7 +3,12 @@ import time
 import httpx
 import pytest
 
-from app.ingestion.fetch import FetchError, RobotsDisallowedError
+from app.ingestion.fetch import (
+    FetchError,
+    RobotsDisallowedError,
+    SafeFetcher,
+    pinned_request,
+)
 from app.ingestion.network import UnsafeUrlError
 from app.ingestion.politeness import wait_for_turn
 from tests.web import FakeWeb
@@ -120,3 +125,98 @@ async def test_different_sites_dont_wait_for_each_other(redis):
     await wait_for_turn(redis, "two.test", delay_seconds=1)
 
     assert time.monotonic() - start < 0.5
+
+
+# --- DNS rebinding: connect to the address that was checked --------------------------
+
+
+class RebindingDns:
+    """A hostile DNS server: a public address first, a private one after."""
+
+    def __init__(self) -> None:
+        self.answers = ["93.184.216.34", "10.0.0.5"]
+        self.lookups: list[str] = []
+
+    async def resolve(self, host: str, port: int) -> str:
+        address = self.answers.pop(0)
+        self.lookups.append(address)
+        if address.startswith("10."):
+            raise UnsafeUrlError(host)
+        return address
+
+
+def recording_fetcher(redis, resolver, handler):
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return SafeFetcher(
+        client, redis, user_agent="HopBot/0.1", delay_seconds=0.001, resolver=resolver
+    )
+
+
+async def test_the_connection_goes_to_the_checked_address(redis):
+    dns = RebindingDns()
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, html="<p>hi</p>")
+
+    fetcher = recording_fetcher(redis, dns.resolve, handler)
+    await fetcher.get(
+        "https://rebind.example/page", max_bytes=10_000, check_robots=False
+    )
+
+    # One lookup, checked, and the connection went to that very address. The
+    # HTTP client never asked DNS again, so the private answer never came.
+    assert dns.lookups == ["93.184.216.34"]
+    assert [r.url.host for r in seen] == ["93.184.216.34"]
+    assert seen[0].headers["host"] == "rebind.example"
+    assert seen[0].extensions["sni_hostname"] == "rebind.example"
+
+
+async def test_every_redirect_hop_is_checked_again(redis):
+    dns = RebindingDns()
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(302, headers={"location": "/next"})
+
+    fetcher = recording_fetcher(redis, dns.resolve, handler)
+    with pytest.raises(UnsafeUrlError):
+        await fetcher.get(
+            "https://rebind.example/page", max_bytes=10_000, check_robots=False
+        )
+
+    assert dns.lookups == ["93.184.216.34", "10.0.0.5"]
+    assert len(seen) == 1  # /next was never requested
+
+
+async def test_a_pinned_fetch_reports_the_sites_own_url(redis):
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, html="<p>hi</p>")
+
+    async def resolve(host, port):
+        return "2606:4700:4700::1111"
+
+    fetcher = recording_fetcher(redis, resolve, handler)
+    fetched = await fetcher.get(
+        "http://example.org:8080/a?b=1", max_bytes=10_000, check_robots=False
+    )
+
+    assert fetched.url == "http://example.org:8080/a?b=1"
+    assert str(seen[0].url) == "http://[2606:4700:4700::1111]:8080/a?b=1"
+    assert seen[0].headers["host"] == "example.org:8080"
+    assert "sni_hostname" not in seen[0].extensions  # plain HTTP has no TLS
+
+
+def test_pinned_requests_drop_credentials():
+    url, headers, extensions = pinned_request(
+        "https://user:pw@example.org/x", "93.184.216.34"
+    )
+
+    assert url == "https://93.184.216.34/x"
+    assert headers == {"Host": "example.org"}
+    assert extensions == {"sni_hostname": "example.org"}

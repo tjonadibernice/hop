@@ -271,7 +271,7 @@ For each URL, the worker (`app/ingestion/pipeline.py`):
 
 1. **Normalizes the URL** (`urls.py`): lowercase host, no default port, no `#fragment`, no tracking parameters (`utm_*`, `fbclid`, ...), sorted query. Skips it if that URL is already stored.
 2. **Fetches it safely** (`fetch.py`), checking every redirect hop:
-    - **SSRF protection** (`network.py`): refuses hosts that resolve to private, loopback, link-local (including the cloud metadata address `169.254.169.254`), or other non-public addresses.
+    - **SSRF protection** (`network.py`): refuses hosts that resolve to private, loopback, link-local (including the cloud metadata address `169.254.169.254`), or other non-public addresses. It's safe against **DNS rebinding**: the host is resolved once per request, every answer is checked, and the fetcher connects to exactly the address it checked (the URL points at the IP, the `Host` header names the site, and for HTTPS the TLS handshake still uses the host name for SNI and the certificate check). A DNS server that answers with a public address for the check and a private one for the connection gets no second question. Each redirect hop is resolved and checked again.
     - **robots.txt**: obeys the site's rules for `HopBot`, cached in Redis for 24 hours. A missing file (4xx) allows everything; an unreachable one (5xx) blocks everything ([RFC 9309](https://www.rfc-editor.org/rfc/rfc9309)).
     - **Politeness** (`politeness.py`): at most one request per site every `CRAWL_DELAY_SECONDS`, enforced through Redis, so it holds across workers.
     - **Limits**: 5 redirects, 2 MB per page, HTML only.
@@ -299,7 +299,7 @@ SimHash gives each text a 64-bit fingerprint where similar texts get similar fin
 
 To avoid comparing against every stored page, each fingerprint is split into 8 bands of 8 bits, stored in `pages.simhash_bands` with a GIN index. Two fingerprints within 7 bits of each other must share at least one identical band (pigeonhole principle), so Postgres only returns pages that share a band (`&&`), and only those are compared bit by bit.
 
-Known limits: two near-duplicates processed at the same moment by different workers can both be stored, and the SSRF check doesn't yet protect against DNS rebinding (see `network.py`).
+Known limit: two near-duplicates processed at the same moment by different workers can both be stored.
 
 ### Enrichment
 
@@ -635,8 +635,8 @@ tests/
 ├── test_linkrot.py      # Link checks: due pages, failures, dead, changed
 ├── test_llm.py          # Provider failover and cooldowns
 ├── test_safety.py       # Blocklist and Safe Browsing
-├── test_fetch.py        # Redirects, robots.txt, limits, politeness
-├── test_network.py      # SSRF address checks
+├── test_fetch.py        # Redirects, robots.txt, limits, politeness, DNS-rebinding pinning
+├── test_network.py      # SSRF address checks, the checked address returned
 ├── test_pipeline.py     # Ingestion outcomes and retries
 ├── test_simhash.py      # Fingerprints and the band guarantee
 ├── test_urls.py         # URL normalization
